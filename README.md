@@ -1,5 +1,10 @@
 # ChatGPT Bulk Delete
 
+![Version](https://img.shields.io/badge/version-1.0.0-3b82f6)
+![Manifest V3](https://img.shields.io/badge/Manifest-V3-10b981)
+![ChatGPT](https://img.shields.io/badge/Works%20on-chatgpt.com-111827)
+![Local Only](https://img.shields.io/badge/Local--only-No%20third--party%20server-22c55e)
+
 Find old chats fast. Check what you want gone. Delete them in bulk.
 
 ## Screenshots
