@@ -58,6 +58,30 @@
   overflow: visible;
 }
 
+.gptbd-show-ui {
+  pointer-events: auto;
+  margin-top: 8px;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(28, 28, 30, 0.97);
+  color: #a1a1aa;
+  font: inherit;
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease, color 100ms ease;
+}
+
+.gptbd-show-ui:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #e4e4e8;
+}
+
 /* ── Main bar (single horizontal row) ───────────────────────────────────── */
 .gptbd-bar {
   display: flex;
@@ -330,6 +354,42 @@
   font-weight: 600;
 }
 
+.gptbd-cache-clear {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  flex: 0 0 auto;
+  padding: 0;
+}
+
+.gptbd-cache-clear::before,
+.gptbd-cache-clear::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 3px;
+  width: 8px;
+  height: 1.25px;
+  border-radius: 999px;
+  background: #a1a1aa;
+}
+
+.gptbd-cache-clear::before {
+  transform: rotate(45deg);
+}
+
+.gptbd-cache-clear::after {
+  transform: rotate(-45deg);
+}
+
+.gptbd-cache-clear:hover {
+  background: rgba(239, 68, 68, 0.18);
+}
+
 .gptbd-meta-dot {
   color: #3f3f46;
   font-size: 11px;
@@ -339,6 +399,56 @@
   font-size: 11px;
   color: #52525b;
   white-space: nowrap;
+}
+
+.gptbd-submeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 14px 0;
+  min-height: 24px;
+}
+
+.gptbd-submeta-left,
+.gptbd-submeta-right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.gptbd-submeta-right {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.gptbd-submeta-link,
+.gptbd-submeta-toggle {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #71717a;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 100ms ease;
+}
+
+.gptbd-submeta-link:hover,
+.gptbd-submeta-toggle:hover {
+  color: #d4d4d8;
+}
+
+.gptbd-submeta-toggle {
+  color: #f87171;
+}
+
+.gptbd-submeta-toggle:hover {
+  color: #fca5a5;
 }
 
 /* ── Selected count ──────────────────────────────────────────────────────── */
@@ -831,4 +941,11 @@
 @media (max-width: 540px) {
   .gptbd-sync-meta { display: none; }
   .gptbd-section--sel { display: none; }
+  .gptbd-submeta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .gptbd-submeta-right {
+    justify-content: flex-start;
+  }
 }

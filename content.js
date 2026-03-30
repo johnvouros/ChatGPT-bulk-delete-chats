@@ -11,11 +11,20 @@
     deleteProgress: { current: 0, total: 0 },
     cachedConversations: [],
     cacheLoadedAt: null,
+    uiHidden: false,
     observer: null,
     refreshTimer: null
   };
 
   const CACHE_KEY = "gptbd-conversation-cache-v1";
+  const APP_VERSION = chrome?.runtime?.getManifest?.().version || "1.0.0";
+  const REPO_BASE_URL = "https://github.com/johnvouros/ChatGPT-bulk-delete-chats";
+  const DOC_LINKS = {
+    privacy: `${REPO_BASE_URL}/blob/main/PRIVACY.md`,
+    license: `${REPO_BASE_URL}/blob/main/LICENSE`,
+    terms: `${REPO_BASE_URL}/blob/main/TERMS.md`,
+    bugs: `${REPO_BASE_URL}/issues/new`
+  };
 
   /* ───────────────────────────── SELECTORS ──────────────────────────────── */
   const SELECTORS = {
@@ -137,14 +146,10 @@
             </button>
             <div class="gptbd-sync-meta">
               <span class="gptbd-meta-pill" data-role="cache-count" hidden></span>
+              <button type="button" class="gptbd-cache-clear" data-action="clear-cache"
+                      title="Clear local cache" aria-label="Clear local cache" hidden></button>
               <span class="gptbd-meta-dot" data-role="sync-dot" aria-hidden="true" hidden>·</span>
               <span class="gptbd-meta-text" data-role="last-sync" hidden></span>
-              <span class="gptbd-meta-dot" aria-hidden="true">·</span>
-              <span class="gptbd-meta-text">local-only</span>
-              <span class="gptbd-meta-dot" aria-hidden="true">·</span>
-              <span class="gptbd-meta-text">delete is permanent</span>
-              <span class="gptbd-meta-dot" aria-hidden="true">·</span>
-              <span class="gptbd-meta-text">v1.0.0</span>
             </div>
           </div>
 
@@ -176,6 +181,29 @@
           </div>
         </div><!-- /.gptbd-bar -->
 
+        <div class="gptbd-submeta">
+          <div class="gptbd-submeta-left" aria-hidden="true">
+            <span class="gptbd-meta-text">local-only</span>
+            <span class="gptbd-meta-dot">·</span>
+            <span class="gptbd-meta-text">delete is permanent</span>
+          </div>
+          <div class="gptbd-submeta-right">
+            <span class="gptbd-meta-text" data-role="version-info"></span>
+            <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+            <a class="gptbd-submeta-link" href="${DOC_LINKS.privacy}" target="_blank" rel="noopener noreferrer">Privacy</a>
+            <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+            <a class="gptbd-submeta-link" href="${DOC_LINKS.license}" target="_blank" rel="noopener noreferrer">License</a>
+            <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+            <a class="gptbd-submeta-link" href="${DOC_LINKS.terms}" target="_blank" rel="noopener noreferrer">Terms</a>
+            <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+            <a class="gptbd-submeta-link" href="${DOC_LINKS.bugs}" target="_blank" rel="noopener noreferrer">Report bug</a>
+            <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+            <button type="button" class="gptbd-submeta-toggle" data-action="toggle-ui-visibility"
+                    title="Hide this toolbar"
+                    aria-label="Hide this toolbar">Hide</button>
+          </div>
+        </div>
+
         <!-- Progress strip (delete / sync) -->
         <div class="gptbd-progress" data-visible="false" aria-hidden="true">
           <div class="gptbd-progress__track">
@@ -188,6 +216,11 @@
         <div class="gptbd-results" data-visible="false"></div>
 
       </div><!-- /.gptbd-toolbar -->
+      <button type="button" class="gptbd-show-ui" data-action="toggle-ui-visibility"
+              title="Show bulk delete toolbar"
+              aria-label="Show bulk delete toolbar" hidden>
+        Show bulk delete
+      </button>
 
       <!-- ── Confirmation modal ── -->
       <div class="gptbd-modal" id="gptbd-modal" data-visible="false"
@@ -288,8 +321,21 @@
         return;
       }
 
+      if (action === "clear-cache") {
+        clearLocalCache();
+        refreshConversationRows();
+        render();
+        return;
+      }
+
       if (action === "delete") {
         await deleteSelectedConversations();
+        return;
+      }
+
+      if (action === "toggle-ui-visibility") {
+        STATE.uiHidden = !STATE.uiHidden;
+        render();
         return;
       }
 
@@ -344,7 +390,13 @@
   /* ──────────────────────────────── RENDER ──────────────────────────────── */
   function render() {
     const toolbar = document.querySelector(".gptbd-toolbar");
-    if (!toolbar) return;
+    const root = document.getElementById("gpt-bulk-delete-root");
+    if (!toolbar || !root) return;
+
+    const showUiBtn = root.querySelector(".gptbd-show-ui");
+    toolbar.hidden = STATE.uiHidden;
+    if (showUiBtn) showUiBtn.hidden = !STATE.uiHidden;
+    if (STATE.uiHidden) return;
 
     const selectedCount = STATE.selectedIds.size;
     const matchCount = getSearchResults().length;
@@ -371,11 +423,16 @@
 
     /* Sync meta */
     const cacheCountEl = toolbar.querySelector('[data-role="cache-count"]');
+    const clearCacheBtn = toolbar.querySelector('[data-action="clear-cache"]');
     const syncDotEl = toolbar.querySelector('[data-role="sync-dot"]');
     const lastSyncEl = toolbar.querySelector('[data-role="last-sync"]');
     if (cacheCountEl) {
       cacheCountEl.textContent = hasCache ? `${STATE.cachedConversations.length.toLocaleString()} cached` : "";
       cacheCountEl.hidden = !hasCache;
+    }
+    if (clearCacheBtn) {
+      clearCacheBtn.hidden = !hasCache;
+      clearCacheBtn.disabled = busy;
     }
     if (lastSyncEl) {
       const syncedText = STATE.cacheLoadedAt ? formatLastSync(STATE.cacheLoadedAt) : "";
@@ -383,6 +440,17 @@
       lastSyncEl.hidden = !syncedText;
     }
     if (syncDotEl) syncDotEl.hidden = !(hasCache && STATE.cacheLoadedAt);
+
+    const versionInfoEl = toolbar.querySelector('[data-role="version-info"]');
+    if (versionInfoEl) versionInfoEl.textContent = `v${APP_VERSION}`;
+
+    const uiToggleBtn = toolbar.querySelector('[data-action="toggle-ui-visibility"]');
+    if (uiToggleBtn) {
+      uiToggleBtn.textContent = STATE.uiHidden ? "Show" : "Hide";
+      uiToggleBtn.title = STATE.uiHidden ? "Show this toolbar" : "Hide this toolbar";
+      uiToggleBtn.setAttribute("aria-label", uiToggleBtn.title);
+      uiToggleBtn.disabled = busy;
+    }
 
     /* Search */
     const searchInput = toolbar.querySelector('[data-role="search"]');
@@ -1060,6 +1128,12 @@
     const next = STATE.cachedConversations.filter(c => c.id !== id);
     if (next.length === STATE.cachedConversations.length) return;
     STATE.cachedConversations = next;
+    persistCache();
+  }
+
+  function clearLocalCache() {
+    STATE.cachedConversations = [];
+    STATE.cacheLoadedAt = null;
     persistCache();
   }
 

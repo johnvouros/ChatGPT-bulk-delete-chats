@@ -21,6 +21,8 @@ Yes, it is privacy-safe in the normal sense for a Chrome extension:
 
 Full policy: `PRIVACY.md`
 
+Terms: `TERMS.md`
+
 ## License
 
 Source-available, non-commercial.
