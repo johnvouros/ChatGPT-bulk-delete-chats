@@ -6,11 +6,15 @@
     lastSelectedId: null,
     searchTerm: "",
     exactSearch: false,
+    selectedYear: "all",
+    cachedSortOrder: "newest",
+    resultsCollapsed: true,
     syncingAll: false,
     deleting: false,
     deleteProgress: { current: 0, total: 0 },
     cachedConversations: [],
     cacheLoadedAt: null,
+    skipDeleteWarning: false,
     uiHidden: false,
     observer: null,
     refreshTimer: null
@@ -18,6 +22,7 @@
 
   const CACHE_KEY = "gptbd-conversation-cache-v1";
   const UI_HIDDEN_KEY = "gptbd-ui-hidden";
+  const SKIP_DELETE_WARNING_KEY = "gptbd-skip-delete-warning";
   const APP_VERSION = chrome?.runtime?.getManifest?.().version || "1.0.0";
   const REPO_BASE_URL = "https://github.com/johnvouros/ChatGPT-bulk-delete-chats";
   const DOC_LINKS = {
@@ -177,6 +182,13 @@
             <span class="gptbd-meta-text">delete is permanent</span>
             <span class="gptbd-meta-dot" data-role="match-meta-dot" hidden>·</span>
             <span class="gptbd-meta-text" data-role="match-count" hidden></span>
+            <span class="gptbd-meta-dot" data-role="jump-hint-dot" hidden>·</span>
+            <span class="gptbd-meta-text gptbd-meta-text--hint" data-role="jump-hint" hidden>
+              Scroll the sidebar to select chats
+            </span>
+            <button type="button" class="gptbd-submeta-link gptbd-submeta-link--hint" data-action="jump-to-chats" hidden>
+              Jump to chats
+            </button>
           </div>
           <div class="gptbd-submeta-right">
             <span class="gptbd-meta-text" data-role="version-info"></span>
@@ -204,10 +216,18 @@
         </div>
 
         <div class="gptbd-results-actions" data-visible="false">
-          <button type="button" class="gptbd-results-action" data-action="select-all"
-                  disabled title="Select all current results, or all cached chats if no filter is active">All</button>
-          <button type="button" class="gptbd-results-action" data-action="clear"
-                  disabled title="Clear selection">Clear</button>
+          <div class="gptbd-results-actions__left" data-role="year-filters"></div>
+          <div class="gptbd-results-actions__right">
+            <button type="button" class="gptbd-results-action" data-action="toggle-results">
+              Hide list
+            </button>
+            <button type="button" class="gptbd-results-action" data-action="toggle-sort"
+                    title="Sort cached results by chat date">Newest first</button>
+            <button type="button" class="gptbd-results-action" data-action="select-all"
+                    disabled title="Select all current results, or all cached chats if no filter is active">All</button>
+            <button type="button" class="gptbd-results-action" data-action="clear"
+                    disabled title="Clear selection">Clear</button>
+          </div>
         </div>
 
         <!-- Search-results panel (cached conversations) -->
@@ -239,6 +259,19 @@
             </div>
           </div>
           <div class="gptbd-modal__preview" data-role="modal-preview"></div>
+          <div class="gptbd-modal__warning">
+            <p class="gptbd-modal__warning-text">
+              Delete is permanent and cannot be recovered.
+            </p>
+            <label class="gptbd-modal__check">
+              <input type="checkbox" class="gptbd-modal__check-input" data-role="modal-warning-check" />
+              <span class="gptbd-modal__check-label">I understand this delete is permanent and cannot be recovered.</span>
+            </label>
+            <label class="gptbd-modal__check">
+              <input type="checkbox" class="gptbd-modal__check-input" data-role="modal-skip-warning-check" />
+              <span class="gptbd-modal__check-label">Don't show me this warning again.</span>
+            </label>
+          </div>
           <div class="gptbd-modal__footer">
             <button type="button" class="gptbd-btn gptbd-btn--cancel" data-action="modal-cancel">
               Cancel
@@ -300,6 +333,12 @@
         return;
       }
 
+      if (action === "jump-to-chats") {
+        jumpToFirstConversationRow();
+        render();
+        return;
+      }
+
       if (action === "clear") {
         STATE.selectedIds.clear();
         STATE.lastSelectedId = null;
@@ -308,10 +347,31 @@
         return;
       }
 
+      if (action === "toggle-sort") {
+        STATE.cachedSortOrder = STATE.cachedSortOrder === "newest" ? "oldest" : "newest";
+        render();
+        return;
+      }
+
+      if (action === "toggle-results") {
+        STATE.resultsCollapsed = !STATE.resultsCollapsed;
+        render();
+        return;
+      }
+
+      if (action === "filter-year") {
+        STATE.selectedYear = el.dataset.year || "all";
+        render();
+        return;
+      }
+
       if (action === "clear-cache") {
+        const confirmed = await showClearCacheModal();
+        if (!confirmed) return;
         clearLocalCache();
         refreshConversationRows();
         render();
+        showToast("Local cache cleared.");
         return;
       }
 
@@ -340,6 +400,7 @@
     const searchInput = root.querySelector('[data-role="search"]');
     searchInput.addEventListener("input", (event) => {
       STATE.searchTerm = normalizeSearchTerm(event.target.value);
+      if (STATE.searchTerm) STATE.resultsCollapsed = false;
       refreshConversationRows();
       render();
     });
@@ -356,6 +417,14 @@
         render();
       }
     });
+
+    document.addEventListener("pointerdown", (event) => {
+      if (!(event.target instanceof Node)) return;
+      if (shouldAutoCollapseResults(event.target)) {
+        STATE.resultsCollapsed = true;
+        render();
+      }
+    }, true);
 
     render();
   }
@@ -442,6 +511,9 @@
     const exactBtn = toolbar.querySelector('[data-action="toggle-exact"]');
     const matchCountEl = toolbar.querySelector('[data-role="match-count"]');
     const matchMetaDotEl = toolbar.querySelector('[data-role="match-meta-dot"]');
+    const jumpHintDotEl = toolbar.querySelector('[data-role="jump-hint-dot"]');
+    const jumpHintEl = toolbar.querySelector('[data-role="jump-hint"]');
+    const jumpHintBtn = toolbar.querySelector('[data-action="jump-to-chats"]');
     if (searchInput) searchInput.disabled = busy;
     if (clearSearchBtn) clearSearchBtn.hidden = !STATE.searchTerm;
     if (exactBtn) {
@@ -450,20 +522,47 @@
     }
     if (matchCountEl) {
       const hasSearch = Boolean(STATE.searchTerm);
-      matchCountEl.textContent = hasSearch ? `${matchCount} match${matchCount === 1 ? "" : "es"}` : "";
-      matchCountEl.hidden = !hasSearch;
+      const hasYearFilter = STATE.selectedYear !== "all";
+      if (hasSearch || hasYearFilter) {
+        const parts = [`${matchCount} match${matchCount === 1 ? "" : "es"}`];
+        if (hasYearFilter) parts.push(`year ${STATE.selectedYear}`);
+        matchCountEl.textContent = parts.join(" in ");
+      } else {
+        matchCountEl.textContent = "";
+      }
+      matchCountEl.hidden = !(hasSearch || hasYearFilter);
     }
-    if (matchMetaDotEl) matchMetaDotEl.hidden = !STATE.searchTerm;
+    if (matchMetaDotEl) matchMetaDotEl.hidden = !(STATE.searchTerm || STATE.selectedYear !== "all");
+
+    const shouldShowJumpHint = STATE.enabled && !busy && needsJumpToChatsHint();
+    if (jumpHintDotEl) jumpHintDotEl.hidden = !shouldShowJumpHint;
+    if (jumpHintEl) jumpHintEl.hidden = !shouldShowJumpHint;
+    if (jumpHintBtn) jumpHintBtn.hidden = !shouldShowJumpHint;
 
     /* Selection buttons */
     const selectAllBtn = toolbar.querySelector('[data-action="select-all"]');
     const clearBtn = toolbar.querySelector('[data-action="clear"]');
+    const sortBtn = toolbar.querySelector('[data-action="toggle-sort"]');
+    const toggleResultsBtn = toolbar.querySelector('[data-action="toggle-results"]');
     const resultsActions = toolbar.querySelector(".gptbd-results-actions");
+    const yearFiltersHost = toolbar.querySelector('[data-role="year-filters"]');
     const selectableCount = getSelectableConversationIds().length;
+    const showingCachedResults = STATE.cachedConversations.length > 0;
     if (selectAllBtn) selectAllBtn.disabled = busy || selectableCount === 0;
     if (clearBtn) clearBtn.disabled = selectedCount === 0 || busy;
+    if (sortBtn) {
+      sortBtn.disabled = busy || !showingCachedResults;
+      sortBtn.textContent = STATE.cachedSortOrder === "newest" ? "Newest first" : "Oldest first";
+    }
+    if (toggleResultsBtn) {
+      toggleResultsBtn.disabled = busy || !showingCachedResults;
+      toggleResultsBtn.textContent = STATE.resultsCollapsed ? "Show list" : "Hide list";
+    }
     if (resultsActions) {
-      resultsActions.dataset.visible = String(Boolean(STATE.searchTerm) && STATE.cachedConversations.length > 0);
+      resultsActions.dataset.visible = String(showingCachedResults);
+    }
+    if (yearFiltersHost) {
+      yearFiltersHost.innerHTML = showingCachedResults ? renderYearFilters(getAvailableYears()) : "";
     }
 
     /* Count */
@@ -532,6 +631,10 @@
       })
       .filter(Boolean)
       .filter((item, index, arr) => arr.findIndex(other => other.id === item.id) === index);
+  }
+
+  function getFirstConversationRow() {
+    return getConversationRows()[0] || null;
   }
 
   function findConversationRow(link) {
@@ -686,17 +789,57 @@
   }
 
   function getSelectableConversationIds() {
-    if (STATE.searchTerm) return getSearchResults().map(item => item.id);
-    if (STATE.cachedConversations.length > 0) return STATE.cachedConversations.map(item => item.id);
-    return getVisibleRows().map(item => item.id);
+    if (STATE.cachedConversations.length > 0) return getSearchResults().map(item => item.id);
+    return (STATE.searchTerm ? getMatchingRows() : getVisibleRows()).map(item => item.id);
   }
 
   function getVisibleRows() {
     return getConversationRows().filter(({ row }) => !row.classList.contains("gptbd-row-hidden"));
   }
 
+  function needsJumpToChatsHint() {
+    const firstRow = getFirstConversationRow();
+    if (!firstRow?.row) return false;
+
+    const scrollContainer = getConversationScrollContainer(firstRow.row);
+    if (!scrollContainer) return false;
+
+    const rowRect = firstRow.row.getBoundingClientRect();
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const isAbove = rowRect.top < containerRect.top;
+    const isBelow = rowRect.bottom > containerRect.bottom;
+    return isAbove || isBelow;
+  }
+
+  function jumpToFirstConversationRow() {
+    const firstRow = getFirstConversationRow();
+    if (!firstRow?.row) return;
+
+    firstRow.row.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+
+    const link = firstRow.row.querySelector("a");
+    if (link instanceof HTMLElement) {
+      window.setTimeout(() => {
+        link.focus({ preventScroll: true });
+      }, 250);
+    }
+  }
+
+  function getConversationScrollContainer(row) {
+    const sidebarRoot = row.closest("nav, aside, [data-testid='history']");
+    if (!(sidebarRoot instanceof HTMLElement)) return null;
+
+    let node = row.parentElement;
+    while (node && node !== sidebarRoot) {
+      if (isScrollable(node)) return node;
+      node = node.parentElement;
+    }
+
+    return isScrollable(sidebarRoot) ? sidebarRoot : sidebarRoot;
+  }
+
   function getRangeSelectableRows() {
-    return STATE.searchTerm ? getVisibleRows() : getConversationRows();
+    return STATE.searchTerm ? getMatchingRows() : getConversationRows();
   }
 
   function getMatchingRows() {
@@ -709,8 +852,7 @@
 
   function getSearchResults() {
     if (STATE.cachedConversations.length > 0) {
-      if (!STATE.searchTerm) return STATE.cachedConversations;
-      return STATE.cachedConversations.filter(c => matchesSearch(c.title, STATE.searchTerm));
+      return sortCachedResults(filterCachedResults(STATE.cachedConversations));
     }
     return getMatchingRows().map(({ id, link }) => ({
       id,
@@ -722,7 +864,7 @@
     const hasSearch = Boolean(STATE.searchTerm);
     const isMatch = !hasSearch || matchesSearch(title, STATE.searchTerm);
     row.classList.toggle("gptbd-row-match", hasSearch && isMatch);
-    row.classList.toggle("gptbd-row-hidden", hasSearch && !isMatch);
+    row.classList.remove("gptbd-row-hidden");
   }
 
   /* ─────────────────────────── DELETE FLOW ──────────────────────────────── */
@@ -782,6 +924,8 @@
 
   /* Show the in-DOM confirmation modal; returns Promise<boolean> */
   function showDeleteModal(ids, titles) {
+    if (STATE.skipDeleteWarning) return Promise.resolve(true);
+
     return new Promise(resolve => {
       const modal = document.getElementById("gptbd-modal");
       if (!modal) { resolve(false); return; }
@@ -790,6 +934,9 @@
       const titleEl = modal.querySelector('[data-role="modal-title"]');
       const previewEl = modal.querySelector('[data-role="modal-preview"]');
       const confirmLabel = modal.querySelector('[data-role="modal-confirm-label"]');
+      const warningCheck = modal.querySelector('[data-role="modal-warning-check"]');
+      const skipWarningCheck = modal.querySelector('[data-role="modal-skip-warning-check"]');
+      const confirmBtn = modal.querySelector('[data-action="modal-confirm"]');
 
       if (titleEl) {
         titleEl.textContent = `Delete ${count}\u00a0conversation${count === 1 ? "" : "s"}?`;
@@ -797,6 +944,9 @@
       if (confirmLabel) {
         confirmLabel.textContent = `Delete\u00a0${count}\u00a0conversation${count === 1 ? "" : "s"}`;
       }
+      if (warningCheck) warningCheck.checked = false;
+      if (skipWarningCheck) skipWarningCheck.checked = false;
+      if (confirmBtn) confirmBtn.disabled = true;
 
       if (previewEl) {
         const maxShow = 8;
@@ -816,11 +966,84 @@
 
       modal.dataset.visible = "true";
 
-      /* Focus confirm button (slight delay to let transition run) */
+      function syncConfirmState() {
+        if (confirmBtn && warningCheck) {
+          confirmBtn.disabled = !warningCheck.checked;
+        }
+      }
+
+      syncConfirmState();
+      if (warningCheck) warningCheck.addEventListener("change", syncConfirmState);
+
+      /* Focus warning checkbox first so the required action is obvious */
+      window.setTimeout(() => { if (warningCheck) warningCheck.focus(); }, 60);
+
+      async function done(result) {
+        if (result && skipWarningCheck?.checked) {
+          await setSkipDeleteWarningPreference(true);
+        }
+        if (warningCheck) warningCheck.removeEventListener("change", syncConfirmState);
+        modal.dataset.visible = "false";
+        document.removeEventListener("keydown", onKeydown);
+        activeModalResolve = null;
+        resolve(result);
+      }
+
+      function onKeydown(e) {
+        if (e.key === "Escape") done(false);
+      }
+
+      document.addEventListener("keydown", onKeydown);
+      activeModalResolve = done;
+    });
+  }
+
+  function showClearCacheModal() {
+    return new Promise(resolve => {
+      const modal = document.getElementById("gptbd-modal");
+      if (!modal) { resolve(false); return; }
+
+      const titleEl = modal.querySelector('[data-role="modal-title"]');
+      const subtitleEl = modal.querySelector(".gptbd-modal__subtitle");
+      const previewEl = modal.querySelector('[data-role="modal-preview"]');
+      const warningWrap = modal.querySelector(".gptbd-modal__warning");
+      const warningText = modal.querySelector(".gptbd-modal__warning-text");
+      const warningCheckWrap = modal.querySelector('[data-role="modal-warning-check"]')?.closest(".gptbd-modal__check");
+      const skipWarningCheckWrap = modal.querySelector('[data-role="modal-skip-warning-check"]')?.closest(".gptbd-modal__check");
+      const confirmLabel = modal.querySelector('[data-role="modal-confirm-label"]');
       const confirmBtn = modal.querySelector('[data-action="modal-confirm"]');
+
+      if (titleEl) titleEl.textContent = "Clear local cache?";
+      if (subtitleEl) subtitleEl.textContent = "This removes the synced chat list stored in the extension on this browser only.";
+      if (previewEl) {
+        previewEl.innerHTML = `
+          <div class="gptbd-modal__preview-item">
+            <span class="gptbd-modal__preview-bullet" aria-hidden="true"></span>
+            <span class="gptbd-modal__preview-text">Your chats in ChatGPT will not be deleted.</span>
+          </div>
+          <div class="gptbd-modal__preview-item">
+            <span class="gptbd-modal__preview-bullet" aria-hidden="true"></span>
+            <span class="gptbd-modal__preview-text">You will need to click Sync all again to restore the cached list.</span>
+          </div>`;
+      }
+      if (warningWrap) warningWrap.hidden = false;
+      if (warningText) warningText.textContent = "Clearing local cache removes the saved chat list from this browser.";
+      if (warningCheckWrap) warningCheckWrap.hidden = true;
+      if (skipWarningCheckWrap) skipWarningCheckWrap.hidden = true;
+      if (confirmLabel) confirmLabel.textContent = "Clear cache";
+      if (confirmBtn) confirmBtn.disabled = false;
+
+      modal.dataset.visible = "true";
       window.setTimeout(() => { if (confirmBtn) confirmBtn.focus(); }, 60);
 
+      function resetModal() {
+        if (warningWrap) warningWrap.hidden = false;
+        if (warningCheckWrap) warningCheckWrap.hidden = false;
+        if (skipWarningCheckWrap) skipWarningCheckWrap.hidden = false;
+      }
+
       function done(result) {
+        resetModal();
         modal.dataset.visible = "false";
         document.removeEventListener("keydown", onKeydown);
         activeModalResolve = null;
@@ -1034,29 +1257,48 @@
   /* ──────────────────────────── RESULTS PANEL ────────────────────────────── */
   function renderResultsPanel(panel) {
     if (!panel) return;
-    const shouldShow = Boolean(STATE.searchTerm) && STATE.cachedConversations.length > 0;
+    const hasSearch = Boolean(STATE.searchTerm);
+    const hasCache = STATE.cachedConversations.length > 0;
+    const shouldShow = (hasSearch && !hasCache) || (hasCache && !STATE.resultsCollapsed);
     panel.dataset.visible = String(shouldShow);
 
     if (!shouldShow) { panel.innerHTML = ""; return; }
-
-    const results = getSearchResults().slice(0, 250);
-    if (results.length === 0) {
-      panel.innerHTML = `<div class="gptbd-empty">No cached chats match this filter.</div>`;
+    if (!hasCache) {
+      panel.innerHTML = `
+        <div class="gptbd-empty gptbd-empty--notice">
+          Search history is not synced yet. Click Sync all to load your full chat history first.
+        </div>`;
       return;
     }
 
-    panel.innerHTML = results.map(c => {
+    const results = getSearchResults().slice(0, 250);
+    if (results.length === 0) {
+      panel.innerHTML = `
+        <div class="gptbd-empty">No cached chats match this filter.</div>`;
+      return;
+    }
+
+    panel.innerHTML = `
+      <div class="gptbd-results-header" aria-hidden="true">
+        <span class="gptbd-results-header__title">Chat</span>
+        <span class="gptbd-results-header__date">Date</span>
+        <span class="gptbd-results-header__open">Open</span>
+      </div>
+      ${results.map(c => {
       const checked = STATE.selectedIds.has(c.id) ? "checked" : "";
       const href = `/c/${encodeURIComponent(c.id)}`;
+      const dateText = formatConversationDate(c.updateTime);
       return `
         <div class="gptbd-result">
           <label class="gptbd-result-main">
             <input type="checkbox" class="gptbd-result-checkbox" data-id="${escapeHtml(c.id)}" ${checked} />
             <span class="gptbd-result-title">${escapeHtml(c.title || "Untitled chat")}</span>
           </label>
+          <span class="gptbd-result-date" title="${escapeHtml(dateText)}">${escapeHtml(dateText)}</span>
           <a class="gptbd-result-open" href="${href}" target="_blank" rel="noopener noreferrer">Open ↗</a>
         </div>`;
-    }).join("");
+    }).join("")}
+    `;
 
     panel.querySelectorAll(".gptbd-result-checkbox").forEach(checkbox => {
       checkbox.addEventListener("change", event => {
@@ -1068,6 +1310,34 @@
         render();
       });
     });
+  }
+
+  function shouldAutoCollapseResults(target) {
+    if (STATE.resultsCollapsed || STATE.uiHidden || activeModalResolve) return false;
+    const root = document.getElementById("gpt-bulk-delete-root");
+    const panel = root?.querySelector(".gptbd-results");
+    if (!root || !panel || panel.dataset.visible !== "true") return false;
+    return !root.contains(target);
+  }
+
+  function renderYearFilters(years) {
+    if (years.length === 0) return "";
+    return `
+      <div class="gptbd-year-filters" role="group" aria-label="Filter cached chats by year">
+        ${["all", ...years].map(year => {
+          const isAll = year === "all";
+          const label = isAll ? "All" : String(year);
+          const active = String(STATE.selectedYear) === String(year);
+          return `
+            <button type="button"
+                    class="gptbd-year-chip"
+                    data-action="filter-year"
+                    data-year="${escapeHtml(String(year))}"
+                    data-active="${String(active)}">
+              ${escapeHtml(label)}
+            </button>`;
+        }).join("")}
+      </div>`;
   }
 
   /* ─────────────────────────── SIDEBAR HELPERS ──────────────────────────── */
@@ -1153,6 +1423,7 @@
   function clearLocalCache() {
     STATE.cachedConversations = [];
     STATE.cacheLoadedAt = null;
+    STATE.selectedYear = "all";
     persistCache();
   }
 
@@ -1193,10 +1464,12 @@
   async function loadPreferences() {
     if (!chrome?.storage?.local) return;
     try {
-      const stored = await chrome.storage.local.get(UI_HIDDEN_KEY);
+      const stored = await chrome.storage.local.get([UI_HIDDEN_KEY, SKIP_DELETE_WARNING_KEY]);
       STATE.uiHidden = Boolean(stored?.[UI_HIDDEN_KEY]);
+      STATE.skipDeleteWarning = Boolean(stored?.[SKIP_DELETE_WARNING_KEY]);
     } catch (_) {
       STATE.uiHidden = false;
+      STATE.skipDeleteWarning = false;
     }
   }
 
@@ -1209,12 +1482,27 @@
     } catch (_) {}
   }
 
+  async function setSkipDeleteWarningPreference(skip) {
+    STATE.skipDeleteWarning = skip;
+    if (!chrome?.storage?.local) return;
+    try {
+      await chrome.storage.local.set({ [SKIP_DELETE_WARNING_KEY]: skip });
+    } catch (_) {}
+  }
+
   function observePreferenceChanges() {
     if (!chrome?.storage?.onChanged || observePreferenceChanges.bound) return;
     chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== "local" || !changes?.[UI_HIDDEN_KEY]) return;
-      STATE.uiHidden = Boolean(changes[UI_HIDDEN_KEY].newValue);
-      render();
+      if (areaName !== "local") return;
+      let shouldRender = false;
+      if (changes?.[UI_HIDDEN_KEY]) {
+        STATE.uiHidden = Boolean(changes[UI_HIDDEN_KEY].newValue);
+        shouldRender = true;
+      }
+      if (changes?.[SKIP_DELETE_WARNING_KEY]) {
+        STATE.skipDeleteWarning = Boolean(changes[SKIP_DELETE_WARNING_KEY].newValue);
+      }
+      if (shouldRender) render();
     });
     observePreferenceChanges.bound = true;
   }
@@ -1232,6 +1520,13 @@
     if (style.display === "none" || style.visibility === "hidden") return false;
     if (style.pointerEvents === "none") return false;
     return element.getClientRects().length > 0;
+  }
+
+  function isScrollable(element) {
+    if (!(element instanceof HTMLElement)) return false;
+    const style = window.getComputedStyle(element);
+    const overflowY = style.overflowY;
+    return /(auto|scroll|overlay)/.test(overflowY) && element.scrollHeight > element.clientHeight + 4;
   }
 
   function getVisibleMenuSurfaces() {
@@ -1264,12 +1559,55 @@
     return normalizeText(value).toLowerCase();
   }
 
+  function filterCachedResults(results) {
+    return results.filter(conversation => {
+      if (STATE.selectedYear !== "all" && getConversationYear(conversation) !== String(STATE.selectedYear)) {
+        return false;
+      }
+      if (STATE.searchTerm && !matchesSearch(conversation.title, STATE.searchTerm)) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  function getAvailableYears() {
+    const years = new Set();
+    STATE.cachedConversations.forEach(conversation => {
+      const year = getConversationYear(conversation);
+      if (year) years.add(year);
+    });
+    return Array.from(years).sort((a, b) => Number(b) - Number(a));
+  }
+
+  function getConversationYear(conversation) {
+    const timestamp = getConversationTimestamp(conversation);
+    if (!timestamp) return null;
+    return String(new Date(timestamp).getFullYear());
+  }
+
   function matchesSearch(title, searchTerm) {
     const normalized = normalizeText(title).toLowerCase();
     if (!STATE.exactSearch) return normalized.includes(searchTerm);
     const keywords = searchTerm.split(/\s+/).filter(Boolean);
     if (keywords.length === 0) return true;
     return keywords.every(kw => new RegExp(`(^|[^a-z0-9])${escapeRegExp(kw)}([^a-z0-9]|$)`, "i").test(normalized));
+  }
+
+  function sortCachedResults(results) {
+    return results.slice().sort((a, b) => {
+      const aTime = getConversationTimestamp(a);
+      const bTime = getConversationTimestamp(b);
+      if (aTime !== bTime) {
+        return STATE.cachedSortOrder === "oldest" ? aTime - bTime : bTime - aTime;
+      }
+      return a.title.localeCompare(b.title);
+    });
+  }
+
+  function getConversationTimestamp(conversation) {
+    const timestamp = conversation?.updateTime ? Date.parse(conversation.updateTime) : 0;
+    return Number.isFinite(timestamp) ? timestamp : 0;
   }
 
   function escapeRegExp(value) {
@@ -1283,6 +1621,17 @@
     return new Intl.DateTimeFormat(undefined, {
       month: "short", day: "numeric",
       hour: "numeric", minute: "2-digit"
+    }).format(date);
+  }
+
+  function formatConversationDate(timestamp) {
+    if (!timestamp) return "Unknown";
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return "Unknown";
+    return new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric"
     }).format(date);
   }
 
