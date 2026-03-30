@@ -5,7 +5,9 @@
 ![ChatGPT](https://img.shields.io/badge/Works%20on-chatgpt.com-111827)
 ![Local Only](https://img.shields.io/badge/Local--only-No%20third--party%20server-22c55e)
 
-Find old chats fast. Check what you want gone. Delete them in bulk.
+Find old ChatGPT conversations fast, review them safely, and delete them in bulk.
+
+Sync your full chat list into a local cache, search by keyword or exact words, open any result to double-check it, then remove multiple chats in one pass.
 
 ## Screenshots
 
@@ -13,7 +15,11 @@ Find old chats fast. Check what you want gone. Delete them in bulk.
 
 ![Annotated product overview](docs/screenshots/github-hero-annotated.png)
 
-### Full in-app view
+### In-app toolbar
+
+![Toolbar and search UI](docs/screenshots/toolbar.png)
+
+### Full ChatGPT view
 
 ![Full ChatGPT Bulk Delete UI](docs/screenshots/fullview.png)
 
@@ -26,11 +32,25 @@ Find old chats fast. Check what you want gone. Delete them in bulk.
 - Syncs your ChatGPT chat list into a local cache
 - Lets you search by keyword or exact words
 - Opens any result in a new tab before you delete it
-- Bulk deletes selected chats
+- Bulk deletes selected chats with a confirmation warning
+
+## Install
+
+1. Open `chrome://extensions`.
+2. Turn on Developer mode.
+3. Click `Load unpacked`.
+4. Select this folder.
+
+## Use
+
+1. Open ChatGPT.
+2. Click `Sync all`.
+3. Search by keyword, exact words, or year.
+4. Open a result in a new tab if you want to verify it first.
+5. Select the chats you want.
+6. Click `Delete`.
 
 ## Privacy
-
-Yes, it is privacy-safe in the normal sense for a Chrome extension:
 
 - No data is sent to any third-party server
 - No analytics, trackers, or ads
@@ -38,9 +58,8 @@ Yes, it is privacy-safe in the normal sense for a Chrome extension:
 - It only talks to ChatGPT/OpenAI endpoints already used by the site
 - No extra extension permissions are requested
 
-Full policy: `PRIVACY.md`
-
-Terms: `TERMS.md`
+Full policy: [`PRIVACY.md`](PRIVACY.md)  
+Terms: [`TERMS.md`](TERMS.md)
 
 ## License
 
@@ -50,20 +69,11 @@ Source-available, non-commercial.
 - Commercial or corporate use is not allowed without permission
 - If someone wants to use it commercially, they need a separate paid license
 
-See `LICENSE`.
-
-## Use
-
-1. Load the folder in `chrome://extensions` with Developer mode on.
-2. Open ChatGPT.
-3. Click `Sync all chats`.
-4. Search.
-5. Open a result in a new tab if you want to check it first.
-6. Select the chats you want.
-7. Click `Delete selected`.
+See [`LICENSE`](LICENSE).
 
 ## Notes
 
-- `Resync chats` refreshes the cache if it gets stale.
-- `Exact words` stops partial matches like `car` matching `care`.
+- `Resync` refreshes the cache if it gets stale.
+- `Exact` stops partial matches like `car` matching `care`.
+- `Clear local cache` only removes the extension's saved chat list on this browser.
 - Icons are in `icons/` and the source SVG is `icon-source.svg`.
