@@ -851,13 +851,16 @@
     const menuButton = findMenuButton(row);
     if (!menuButton) return false;
 
+    const menuSurfacesBefore = getVisibleMenuSurfaces();
     openConversationMenu(menuButton);
-    const deleteControl = await waitForDeleteMenuItem();
+    const menuSurface = await waitForMenuSurface(menuSurfacesBefore);
+    const deleteControl = await waitForDeleteMenuItem(menuSurface);
     if (!deleteControl) { dismissOpenMenus(); return false; }
 
+    const dialogsBefore = getVisibleDialogs();
     deleteControl.click();
 
-    const confirmButton = await waitForDeleteConfirmButton();
+    const confirmButton = await waitForDeleteConfirmButton(dialogsBefore);
     if (!confirmButton) { dismissOpenMenus(); return false; }
 
     confirmButton.click();
@@ -880,8 +883,7 @@
       });
 
       if (!response.ok) return false;
-      await waitForConversationRemoval(id, 3000);
-      return true;
+      return await waitForConversationRemoval(id, 3000);
     } catch (_) {
       return false;
     }
@@ -895,9 +897,10 @@
       .sort((a, b) => b.score - a.score)[0]?.button || null;
   }
 
-  async function waitForDeleteMenuItem() {
+  async function waitForDeleteMenuItem(menuSurface) {
     return waitFor(() => {
-      const items = Array.from(document.querySelectorAll(SELECTORS.menuItems)).filter(item => {
+      if (!(menuSurface instanceof HTMLElement) || !isElementVisible(menuSurface)) return null;
+      const items = Array.from(menuSurface.querySelectorAll(SELECTORS.menuItems)).filter(item => {
         return isElementVisible(item) && !item.closest("#gpt-bulk-delete-root");
       });
       const exact = items.find(item => /delete|trash/i.test(normalizeText(item.textContent)));
@@ -915,9 +918,12 @@
     }, 2500);
   }
 
-  async function waitForDeleteConfirmButton() {
+  async function waitForDeleteConfirmButton(dialogsBefore = []) {
     return waitFor(() => {
-      for (const dialog of Array.from(document.querySelectorAll(SELECTORS.dialogs))) {
+      const beforeSet = new Set(dialogsBefore);
+      const dialogs = getVisibleDialogs();
+      const preferredDialogs = dialogs.filter(dialog => !beforeSet.has(dialog));
+      for (const dialog of preferredDialogs.length > 0 ? preferredDialogs : dialogs) {
         const match = Array.from(dialog.querySelectorAll("button"))
           .find(b => /^delete$/i.test(normalizeText(b.textContent)));
         if (match) return match;
@@ -975,6 +981,11 @@
       persistCache();
       render();
       showToast(`Synced ${conversations.length.toLocaleString()} chats to cache.`);
+    } catch (error) {
+      const message = error instanceof Error && error.message
+        ? error.message
+        : "Sync failed. Refresh ChatGPT and try again.";
+      showToast(message);
     } finally {
       STATE.syncingAll = false;
       render();
@@ -1103,6 +1114,7 @@
   }
 
   async function refreshSidebarAfterDelete() {
+    const beforeIds = getConversationRows().map(({ id }) => id).join(",");
     const beforeCount = getConversationRows().length;
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 
@@ -1118,8 +1130,9 @@
     await delay(600);
     refreshConversationRows();
 
+    const afterIds = getConversationRows().map(({ id }) => id).join(",");
     const afterCount = getConversationRows().length;
-    return afterCount < beforeCount || !document.querySelector(".gptbd-row-selected");
+    return afterCount < beforeCount || afterIds !== beforeIds;
   }
 
   function removeConversationRow(id) {
@@ -1219,6 +1232,32 @@
     if (style.display === "none" || style.visibility === "hidden") return false;
     if (style.pointerEvents === "none") return false;
     return element.getClientRects().length > 0;
+  }
+
+  function getVisibleMenuSurfaces() {
+    return Array.from(document.querySelectorAll([
+      '[role="menu"]',
+      '[data-radix-menu-content]',
+      '[data-radix-popper-content-wrapper]'
+    ].join(", "))).filter(element => {
+      return isElementVisible(element) && !element.closest("#gpt-bulk-delete-root");
+    });
+  }
+
+  async function waitForMenuSurface(menuSurfacesBefore = []) {
+    return waitFor(() => {
+      const beforeSet = new Set(menuSurfacesBefore);
+      const surfaces = getVisibleMenuSurfaces();
+      const newSurface = surfaces.find(surface => !beforeSet.has(surface));
+      if (newSurface) return newSurface;
+      return surfaces.find(surface => surface.querySelector(SELECTORS.menuItems)) || null;
+    }, 2500);
+  }
+
+  function getVisibleDialogs() {
+    return Array.from(document.querySelectorAll(SELECTORS.dialogs)).filter(dialog => {
+      return isElementVisible(dialog) && !dialog.closest("#gpt-bulk-delete-root");
+    });
   }
 
   function normalizeSearchTerm(value) {
