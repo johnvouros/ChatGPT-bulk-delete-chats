@@ -1,0 +1,139 @@
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #1f1f1f;
+  color: #ececec;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.popup {
+  padding: 14px;
+}
+
+.popup__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.popup__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.popup__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.popup__subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+
+.popup__section {
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.popup__section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.popup__section--compact {
+  padding-top: 4px;
+  padding-bottom: 12px;
+}
+
+.popup__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  cursor: pointer;
+}
+
+.popup__toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.popup__toggle-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.popup__toggle-note {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+
+.popup__switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: #3f3f46;
+  transition: background 120ms ease;
+  flex: 0 0 auto;
+}
+
+.popup__switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 120ms ease;
+}
+
+.popup__toggle input:checked + .popup__switch {
+  background: #10a37f;
+}
+
+.popup__toggle input:checked + .popup__switch::after {
+  transform: translateX(18px);
+}
+
+.popup__meta {
+  margin: 0;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+
+.popup__links {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.popup__link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #ececec;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.popup__link:hover {
+  background: rgba(255, 255, 255, 0.07);
+}

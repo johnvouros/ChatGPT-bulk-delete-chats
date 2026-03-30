@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ChatGPT Bulk Delete</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <header class="popup__header">
+        <img class="popup__icon" src="icons/icon-48.png" alt="" />
+        <div>
+          <h1 class="popup__title">ChatGPT Bulk Delete</h1>
+          <p class="popup__subtitle" id="version-label">Version</p>
+        </div>
+      </header>
+
+      <section class="popup__section">
+        <label class="popup__toggle">
+          <span>
+            <span class="popup__toggle-title">Show toolbar on ChatGPT</span>
+            <span class="popup__toggle-note">Hide or show the in-page bulk delete UI.</span>
+          </span>
+          <input id="toolbar-toggle" type="checkbox" />
+          <span class="popup__switch" aria-hidden="true"></span>
+        </label>
+      </section>
+
+      <section class="popup__section popup__section--compact">
+        <p class="popup__meta">Local-only. Delete is permanent.</p>
+      </section>
+
+      <nav class="popup__links" aria-label="Extension links">
+        <a class="popup__link" id="privacy-link" target="_blank" rel="noopener noreferrer">Privacy</a>
+        <a class="popup__link" id="license-link" target="_blank" rel="noopener noreferrer">License</a>
+        <a class="popup__link" id="terms-link" target="_blank" rel="noopener noreferrer">Terms</a>
+        <a class="popup__link" id="bugs-link" target="_blank" rel="noopener noreferrer">Report bug</a>
+      </nav>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -17,6 +17,7 @@
   };
 
   const CACHE_KEY = "gptbd-conversation-cache-v1";
+  const UI_HIDDEN_KEY = "gptbd-ui-hidden";
   const APP_VERSION = chrome?.runtime?.getManifest?.().version || "1.0.0";
   const REPO_BASE_URL = "https://github.com/johnvouros/ChatGPT-bulk-delete-chats";
   const DOC_LINKS = {
@@ -60,6 +61,7 @@
     injectShell();
     refreshConversationRows();
     observeDom();
+    observePreferenceChanges();
     render();
   }
 
@@ -334,8 +336,7 @@
       }
 
       if (action === "toggle-ui-visibility") {
-        STATE.uiHidden = !STATE.uiHidden;
-        render();
+        await setUiHiddenPreference(!STATE.uiHidden);
         return;
       }
 
@@ -1171,6 +1172,35 @@
     }
   }
 
+  async function loadPreferences() {
+    if (!chrome?.storage?.local) return;
+    try {
+      const stored = await chrome.storage.local.get(UI_HIDDEN_KEY);
+      STATE.uiHidden = Boolean(stored?.[UI_HIDDEN_KEY]);
+    } catch (_) {
+      STATE.uiHidden = false;
+    }
+  }
+
+  async function setUiHiddenPreference(hidden) {
+    STATE.uiHidden = hidden;
+    render();
+    if (!chrome?.storage?.local) return;
+    try {
+      await chrome.storage.local.set({ [UI_HIDDEN_KEY]: hidden });
+    } catch (_) {}
+  }
+
+  function observePreferenceChanges() {
+    if (!chrome?.storage?.onChanged || observePreferenceChanges.bound) return;
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local" || !changes?.[UI_HIDDEN_KEY]) return;
+      STATE.uiHidden = Boolean(changes[UI_HIDDEN_KEY].newValue);
+      render();
+    });
+    observePreferenceChanges.bound = true;
+  }
+
   /* ──────────────────────────── UTILITIES ───────────────────────────────── */
   function normalizeText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
@@ -1216,11 +1246,15 @@
   }
 
   /* ─────────────────────────── INIT ─────────────────────────────────────── */
-  loadCache();
+  async function init() {
+    loadCache();
+    await loadPreferences();
+    boot();
+  }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot, { once: true });
+    document.addEventListener("DOMContentLoaded", () => { void init(); }, { once: true });
   } else {
-    boot();
+    void init();
   }
 })();
