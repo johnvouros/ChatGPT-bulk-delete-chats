@@ -92,10 +92,12 @@
   flex: 0 1 210px;        /* can shrink, won't grow wider than 210px */
   min-width: 110px;
   padding-left: 4px;      /* tighten gap from Select chats */
-  overflow: hidden;       /* prevents Exact button overflowing into Resync */
+  padding-right: 6px;
+  overflow: hidden;       /* prevents inline controls overflowing into Resync */
 }
 
 .gptbd-section--sync { gap: 6px; }
+.gptbd-section--sel { gap: 4px; padding-left: 4px; padding-right: 6px; }
 .gptbd-section--act  { gap: 8px; padding-left: 8px; padding-right: 14px; } /* more right room for delete hover */
 
 /* ── Identity mark ───────────────────────────────────────────────────────── */
@@ -233,8 +235,9 @@
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
-  padding: 0 8px;
-  gap: 6px;
+  min-width: 0;
+  padding: 0 6px 0 8px;
+  gap: 4px;
   height: 30px;
   transition: border-color 120ms ease, background 120ms ease;
 }
@@ -293,20 +296,41 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* ── Match-count badge ───────────────────────────────────────────────────── */
-.gptbd-badge {
+.gptbd-search-exact {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 22px;
+  flex: 0 0 auto;
   height: 20px;
-  padding: 0 8px;
+  padding: 0 7px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #a1a1aa;
+  background: transparent;
+  color: #71717a;
+  font-family: inherit;
   font-size: 11px;
   font-weight: 600;
-  flex-shrink: 0;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 100ms ease, background 100ms ease, border-color 100ms ease, opacity 100ms ease;
+}
+
+.gptbd-search-exact:hover:not(:disabled) {
+  color: #d4d4d8;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+
+.gptbd-search-exact[data-active="true"] {
+  color: #f4f4f5;
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.gptbd-search-exact:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ── Sync meta info ──────────────────────────────────────────────────────── */

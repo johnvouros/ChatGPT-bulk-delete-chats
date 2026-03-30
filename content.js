@@ -126,10 +126,9 @@
                   <path d="M2 2l8 8M10 2L2 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                 </svg>
               </button>
+              <button type="button" class="gptbd-search-exact" data-action="toggle-exact"
+                      title="Match whole words only" aria-label="Match whole words only">Exact</button>
             </div>
-            <button type="button" class="gptbd-btn gptbd-btn--chip" data-action="toggle-exact"
-                    title="Match whole words only">Exact</button>
-            <span class="gptbd-badge" data-role="match-count" hidden aria-live="polite"></span>
           </div>
 
           <div class="gptbd-sep" aria-hidden="true"></div>
@@ -159,10 +158,8 @@
 
           <!-- Selection helpers -->
           <div class="gptbd-section gptbd-section--sel">
-            <button type="button" class="gptbd-btn gptbd-btn--chip" data-action="select-visible"
-                    disabled title="Select all rows currently visible in the sidebar">Visible</button>
-            <button type="button" class="gptbd-btn gptbd-btn--chip" data-action="select-matches"
-                    disabled title="Select all chats matching the current filter (including cached)">Matches</button>
+            <button type="button" class="gptbd-btn gptbd-btn--chip" data-action="select-all"
+                    disabled title="Select all current results, or all cached chats if no filter is active">All</button>
             <button type="button" class="gptbd-btn gptbd-btn--chip" data-action="clear"
                     disabled title="Clear selection">Clear</button>
           </div>
@@ -188,6 +185,8 @@
             <span class="gptbd-meta-text">local-only</span>
             <span class="gptbd-meta-dot">·</span>
             <span class="gptbd-meta-text">delete is permanent</span>
+            <span class="gptbd-meta-dot" data-role="match-meta-dot" hidden>·</span>
+            <span class="gptbd-meta-text" data-role="match-count" hidden></span>
           </div>
           <div class="gptbd-submeta-right">
             <span class="gptbd-meta-text" data-role="version-info"></span>
@@ -298,14 +297,8 @@
         return;
       }
 
-      if (action === "select-visible") {
-        selectVisibleRows();
-        render();
-        return;
-      }
-
-      if (action === "select-matches") {
-        selectMatchingRows();
+      if (action === "select-all") {
+        selectAllRows();
         render();
         return;
       }
@@ -451,6 +444,7 @@
     const clearSearchBtn = toolbar.querySelector('[data-action="clear-search"]');
     const exactBtn = toolbar.querySelector('[data-action="toggle-exact"]');
     const matchCountEl = toolbar.querySelector('[data-role="match-count"]');
+    const matchMetaDotEl = toolbar.querySelector('[data-role="match-meta-dot"]');
     if (searchInput) searchInput.disabled = busy;
     if (clearSearchBtn) clearSearchBtn.hidden = !STATE.searchTerm;
     if (exactBtn) {
@@ -459,16 +453,16 @@
     }
     if (matchCountEl) {
       const hasSearch = Boolean(STATE.searchTerm);
-      matchCountEl.textContent = hasSearch ? String(matchCount) : "";
+      matchCountEl.textContent = hasSearch ? `${matchCount} match${matchCount === 1 ? "" : "es"}` : "";
       matchCountEl.hidden = !hasSearch;
     }
+    if (matchMetaDotEl) matchMetaDotEl.hidden = !STATE.searchTerm;
 
     /* Selection buttons */
-    const selectVisibleBtn = toolbar.querySelector('[data-action="select-visible"]');
-    const selectMatchesBtn = toolbar.querySelector('[data-action="select-matches"]');
+    const selectAllBtn = toolbar.querySelector('[data-action="select-all"]');
     const clearBtn = toolbar.querySelector('[data-action="clear"]');
-    if (selectVisibleBtn) selectVisibleBtn.disabled = !STATE.enabled || busy;
-    if (selectMatchesBtn) selectMatchesBtn.disabled = !STATE.enabled || busy || matchCount === 0;
+    const selectableCount = getSelectableConversationIds().length;
+    if (selectAllBtn) selectAllBtn.disabled = !STATE.enabled || busy || selectableCount === 0;
     if (clearBtn) clearBtn.disabled = selectedCount === 0 || busy;
 
     /* Count */
@@ -680,9 +674,20 @@
     syncCheckboxes();
   }
 
+  function selectAllRows() {
+    getSelectableConversationIds().forEach(id => STATE.selectedIds.add(id));
+    syncCheckboxes();
+  }
+
   function selectMatchingRows() {
     getSearchResults().forEach(({ id }) => STATE.selectedIds.add(id));
     syncCheckboxes();
+  }
+
+  function getSelectableConversationIds() {
+    if (STATE.searchTerm) return getSearchResults().map(item => item.id);
+    if (STATE.cachedConversations.length > 0) return STATE.cachedConversations.map(item => item.id);
+    return getVisibleRows().map(item => item.id);
   }
 
   function getVisibleRows() {
