@@ -31,6 +31,8 @@
     terms: `${REPO_BASE_URL}/blob/main/TERMS.md`,
     bugs: `${REPO_BASE_URL}/issues/new`
   };
+  const DEFAULT_DELETE_MODAL_SUBTITLE = "Permanent. ChatGPT does not support undo.";
+  const DEFAULT_DELETE_MODAL_WARNING = "Delete is permanent and cannot be recovered.";
 
   /* ───────────────────────────── SELECTORS ──────────────────────────────── */
   const SELECTORS = {
@@ -938,6 +940,8 @@
       const skipWarningCheck = modal.querySelector('[data-role="modal-skip-warning-check"]');
       const confirmBtn = modal.querySelector('[data-action="modal-confirm"]');
 
+      resetModalToDeleteDefaults(modal);
+
       if (titleEl) {
         titleEl.textContent = `Delete ${count}\u00a0conversation${count === 1 ? "" : "s"}?`;
       }
@@ -1003,6 +1007,8 @@
       const modal = document.getElementById("gptbd-modal");
       if (!modal) { resolve(false); return; }
 
+      resetModalToDeleteDefaults(modal);
+
       const titleEl = modal.querySelector('[data-role="modal-title"]');
       const subtitleEl = modal.querySelector(".gptbd-modal__subtitle");
       const previewEl = modal.querySelector('[data-role="modal-preview"]');
@@ -1037,9 +1043,7 @@
       window.setTimeout(() => { if (confirmBtn) confirmBtn.focus(); }, 60);
 
       function resetModal() {
-        if (warningWrap) warningWrap.hidden = false;
-        if (warningCheckWrap) warningCheckWrap.hidden = false;
-        if (skipWarningCheckWrap) skipWarningCheckWrap.hidden = false;
+        resetModalToDeleteDefaults(modal);
       }
 
       function done(result) {
@@ -1510,6 +1514,21 @@
   /* ──────────────────────────── UTILITIES ───────────────────────────────── */
   function normalizeText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function resetModalToDeleteDefaults(modal) {
+    if (!(modal instanceof HTMLElement)) return;
+    const subtitleEl = modal.querySelector(".gptbd-modal__subtitle");
+    const warningWrap = modal.querySelector(".gptbd-modal__warning");
+    const warningText = modal.querySelector(".gptbd-modal__warning-text");
+    const warningCheckWrap = modal.querySelector('[data-role="modal-warning-check"]')?.closest(".gptbd-modal__check");
+    const skipWarningCheckWrap = modal.querySelector('[data-role="modal-skip-warning-check"]')?.closest(".gptbd-modal__check");
+
+    if (subtitleEl) subtitleEl.textContent = DEFAULT_DELETE_MODAL_SUBTITLE;
+    if (warningWrap) warningWrap.hidden = false;
+    if (warningText) warningText.textContent = DEFAULT_DELETE_MODAL_WARNING;
+    if (warningCheckWrap) warningCheckWrap.hidden = false;
+    if (skipWarningCheckWrap) skipWarningCheckWrap.hidden = false;
   }
 
   function isElementVisible(element) {
