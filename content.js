@@ -156,16 +156,6 @@
 
           <div class="gptbd-sep" aria-hidden="true"></div>
 
-          <!-- Selection helpers -->
-          <div class="gptbd-section gptbd-section--sel">
-            <button type="button" class="gptbd-btn gptbd-btn--chip" data-action="select-all"
-                    disabled title="Select all current results, or all cached chats if no filter is active">All</button>
-            <button type="button" class="gptbd-btn gptbd-btn--chip" data-action="clear"
-                    disabled title="Clear selection">Clear</button>
-          </div>
-
-          <div class="gptbd-sep" aria-hidden="true"></div>
-
           <!-- Count + destructive action -->
           <div class="gptbd-section gptbd-section--act">
             <span class="gptbd-count" data-role="count" aria-live="polite">0 selected</span>
@@ -181,7 +171,7 @@
         </div><!-- /.gptbd-bar -->
 
         <div class="gptbd-submeta">
-          <div class="gptbd-submeta-left" aria-hidden="true">
+          <div class="gptbd-submeta-left">
             <span class="gptbd-meta-text">local-only</span>
             <span class="gptbd-meta-dot">·</span>
             <span class="gptbd-meta-text">delete is permanent</span>
@@ -211,6 +201,13 @@
             <div class="gptbd-progress__bar" data-role="progress-bar"></div>
           </div>
           <span class="gptbd-progress__label" data-role="progress-label"></span>
+        </div>
+
+        <div class="gptbd-results-actions" data-visible="false">
+          <button type="button" class="gptbd-results-action" data-action="select-all"
+                  disabled title="Select all current results, or all cached chats if no filter is active">All</button>
+          <button type="button" class="gptbd-results-action" data-action="clear"
+                  disabled title="Clear selection">Clear</button>
         </div>
 
         <!-- Search-results panel (cached conversations) -->
@@ -461,9 +458,13 @@
     /* Selection buttons */
     const selectAllBtn = toolbar.querySelector('[data-action="select-all"]');
     const clearBtn = toolbar.querySelector('[data-action="clear"]');
+    const resultsActions = toolbar.querySelector(".gptbd-results-actions");
     const selectableCount = getSelectableConversationIds().length;
-    if (selectAllBtn) selectAllBtn.disabled = !STATE.enabled || busy || selectableCount === 0;
+    if (selectAllBtn) selectAllBtn.disabled = busy || selectableCount === 0;
     if (clearBtn) clearBtn.disabled = selectedCount === 0 || busy;
+    if (resultsActions) {
+      resultsActions.dataset.visible = String(Boolean(STATE.searchTerm) && STATE.cachedConversations.length > 0);
+    }
 
     /* Count */
     const countEl = toolbar.querySelector('[data-role="count"]');
