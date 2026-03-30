@@ -587,7 +587,7 @@
 
           /* Shift-range select */
           if (event.shiftKey && STATE.lastSelectedId && STATE.lastSelectedId !== currentId) {
-            const allRows = getConversationRows();
+            const allRows = getRangeSelectableRows();
             const allIds = allRows.map(r => r.id);
             const cIdx = allIds.indexOf(currentId);
             const lIdx = allIds.indexOf(STATE.lastSelectedId);
@@ -636,7 +636,7 @@
 
           /* Shift-range select from row click */
           if (event.shiftKey && STATE.lastSelectedId && STATE.lastSelectedId !== currentId) {
-            const allRows = getConversationRows();
+            const allRows = getRangeSelectableRows();
             const allIds = allRows.map(r => r.id);
             const cIdx = allIds.indexOf(currentId);
             const lIdx = allIds.indexOf(STATE.lastSelectedId);
@@ -687,6 +687,10 @@
 
   function getVisibleRows() {
     return getConversationRows().filter(({ row }) => !row.classList.contains("gptbd-row-hidden"));
+  }
+
+  function getRangeSelectableRows() {
+    return STATE.searchTerm ? getVisibleRows() : getConversationRows();
   }
 
   function getMatchingRows() {
@@ -887,7 +891,9 @@
 
   async function waitForDeleteMenuItem() {
     return waitFor(() => {
-      const items = Array.from(document.querySelectorAll(SELECTORS.menuItems));
+      const items = Array.from(document.querySelectorAll(SELECTORS.menuItems)).filter(item => {
+        return isElementVisible(item) && !item.closest("#gpt-bulk-delete-root");
+      });
       const exact = items.find(item => /delete|trash/i.test(normalizeText(item.textContent)));
       if (exact) return exact;
 
@@ -975,7 +981,7 @@
     const all = [];
     const seen = new Set();
 
-    while (offset < 20000) {
+    while (true) {
       const response = await fetch(`/backend-api/conversations?offset=${offset}&limit=${limit}`, {
         credentials: "include",
         headers: { Authorization: `Bearer ${accessToken}` }
@@ -1197,6 +1203,16 @@
   /* ──────────────────────────── UTILITIES ───────────────────────────────── */
   function normalizeText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function isElementVisible(element) {
+    if (!(element instanceof HTMLElement)) return false;
+    if (element.hidden) return false;
+    if (element.getAttribute("aria-hidden") === "true") return false;
+    const style = window.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    if (style.pointerEvents === "none") return false;
+    return element.getClientRects().length > 0;
   }
 
   function normalizeSearchTerm(value) {
