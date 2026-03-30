@@ -58,30 +58,6 @@
   overflow: visible;
 }
 
-.gptbd-show-ui {
-  pointer-events: auto;
-  margin-top: 8px;
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
-  background: rgba(28, 28, 30, 0.97);
-  color: #a1a1aa;
-  font: inherit;
-  cursor: pointer;
-  transition: background 100ms ease, border-color 100ms ease, color 100ms ease;
-}
-
-.gptbd-show-ui:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.12);
-  color: #e4e4e8;
-}
-
 /* ── Main bar (single horizontal row) ───────────────────────────────────── */
 .gptbd-bar {
   display: flex;

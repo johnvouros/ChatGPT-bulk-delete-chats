@@ -218,11 +218,6 @@
         <div class="gptbd-results" data-visible="false"></div>
 
       </div><!-- /.gptbd-toolbar -->
-      <button type="button" class="gptbd-show-ui" data-action="toggle-ui-visibility"
-              title="Show bulk delete toolbar"
-              aria-label="Show bulk delete toolbar" hidden>
-        Show bulk delete
-      </button>
 
       <!-- ── Confirmation modal ── -->
       <div class="gptbd-modal" id="gptbd-modal" data-visible="false"
@@ -394,9 +389,7 @@
     const root = document.getElementById("gpt-bulk-delete-root");
     if (!toolbar || !root) return;
 
-    const showUiBtn = root.querySelector(".gptbd-show-ui");
     toolbar.hidden = STATE.uiHidden;
-    if (showUiBtn) showUiBtn.hidden = !STATE.uiHidden;
     if (STATE.uiHidden) return;
 
     const selectedCount = STATE.selectedIds.size;
