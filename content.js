@@ -78,7 +78,7 @@
 
     const root = document.createElement("div");
     root.id = "gpt-bulk-delete-root";
-    root.innerHTML = `
+    const shell = `
       <div class="gptbd-toolbar">
 
         <!-- ── Main horizontal bar ── -->
@@ -288,6 +288,7 @@
       <!-- Toast -->
       <div class="gptbd-toast" aria-live="polite" aria-atomic="true"></div>
     `;
+    root.append(createTemplateFragment(shell));
 
     document.documentElement.appendChild(root);
 
@@ -564,7 +565,7 @@
       resultsActions.dataset.visible = String(showingCachedResults);
     }
     if (yearFiltersHost) {
-      yearFiltersHost.innerHTML = showingCachedResults ? renderYearFilters(getAvailableYears()) : "";
+      replaceChildren(yearFiltersHost, showingCachedResults ? buildYearFilters(getAvailableYears()) : []);
     }
 
     /* Count */
@@ -956,16 +957,7 @@
         const maxShow = 8;
         const shown = titles.slice(0, maxShow);
         const remaining = titles.length - shown.length;
-        previewEl.innerHTML =
-          shown.map(t =>
-            `<div class="gptbd-modal__preview-item">
-               <span class="gptbd-modal__preview-bullet" aria-hidden="true"></span>
-               <span class="gptbd-modal__preview-text">${escapeHtml(t)}</span>
-             </div>`
-          ).join("") +
-          (remaining > 0
-            ? `<div class="gptbd-modal__preview-more">+\u202f${remaining}\u00a0more\u2026</div>`
-            : "");
+        replaceChildren(previewEl, buildDeletePreviewItems(shown, remaining));
       }
 
       modal.dataset.visible = "true";
@@ -1022,15 +1014,7 @@
       if (titleEl) titleEl.textContent = "Clear local cache?";
       if (subtitleEl) subtitleEl.textContent = "This removes the synced chat list stored in the extension on this browser only.";
       if (previewEl) {
-        previewEl.innerHTML = `
-          <div class="gptbd-modal__preview-item">
-            <span class="gptbd-modal__preview-bullet" aria-hidden="true"></span>
-            <span class="gptbd-modal__preview-text">Your chats in ChatGPT will not be deleted.</span>
-          </div>
-          <div class="gptbd-modal__preview-item">
-            <span class="gptbd-modal__preview-bullet" aria-hidden="true"></span>
-            <span class="gptbd-modal__preview-text">You will need to click Sync all again to restore the cached list.</span>
-          </div>`;
+        replaceChildren(previewEl, buildClearCachePreviewItems());
       }
       if (warningWrap) warningWrap.hidden = false;
       if (warningText) warningText.textContent = "Clearing local cache removes the saved chat list from this browser.";
@@ -1266,43 +1250,21 @@
     const shouldShow = (hasSearch && !hasCache) || (hasCache && !STATE.resultsCollapsed);
     panel.dataset.visible = String(shouldShow);
 
-    if (!shouldShow) { panel.innerHTML = ""; return; }
+    if (!shouldShow) { replaceChildren(panel, []); return; }
     if (!hasCache) {
-      panel.innerHTML = `
-        <div class="gptbd-empty gptbd-empty--notice">
-          Search history is not synced yet. Click Sync all to load your full chat history first.
-        </div>`;
+      replaceChildren(panel, [buildEmptyState(
+        "Search history is not synced yet. Click Sync all to load your full chat history first.",
+        true
+      )]);
       return;
     }
 
     const results = getSearchResults().slice(0, 250);
     if (results.length === 0) {
-      panel.innerHTML = `
-        <div class="gptbd-empty">No cached chats match this filter.</div>`;
+      replaceChildren(panel, [buildEmptyState("No cached chats match this filter.")]);
       return;
     }
-
-    panel.innerHTML = `
-      <div class="gptbd-results-header" aria-hidden="true">
-        <span class="gptbd-results-header__title">Chat</span>
-        <span class="gptbd-results-header__date">Date</span>
-        <span class="gptbd-results-header__open">Open</span>
-      </div>
-      ${results.map(c => {
-      const checked = STATE.selectedIds.has(c.id) ? "checked" : "";
-      const href = `/c/${encodeURIComponent(c.id)}`;
-      const dateText = formatConversationDate(c.updateTime);
-      return `
-        <div class="gptbd-result">
-          <label class="gptbd-result-main">
-            <input type="checkbox" class="gptbd-result-checkbox" data-id="${escapeHtml(c.id)}" ${checked} />
-            <span class="gptbd-result-title">${escapeHtml(c.title || "Untitled chat")}</span>
-          </label>
-          <span class="gptbd-result-date" title="${escapeHtml(dateText)}">${escapeHtml(dateText)}</span>
-          <a class="gptbd-result-open" href="${href}" target="_blank" rel="noopener noreferrer">Open ↗</a>
-        </div>`;
-    }).join("")}
-    `;
+    replaceChildren(panel, buildResultsPanelNodes(results));
 
     panel.querySelectorAll(".gptbd-result-checkbox").forEach(checkbox => {
       checkbox.addEventListener("change", event => {
@@ -1324,24 +1286,26 @@
     return !root.contains(target);
   }
 
-  function renderYearFilters(years) {
-    if (years.length === 0) return "";
-    return `
-      <div class="gptbd-year-filters" role="group" aria-label="Filter cached chats by year">
-        ${["all", ...years].map(year => {
-          const isAll = year === "all";
-          const label = isAll ? "All" : String(year);
-          const active = String(STATE.selectedYear) === String(year);
-          return `
-            <button type="button"
-                    class="gptbd-year-chip"
-                    data-action="filter-year"
-                    data-year="${escapeHtml(String(year))}"
-                    data-active="${String(active)}">
-              ${escapeHtml(label)}
-            </button>`;
-        }).join("")}
-      </div>`;
+  function buildYearFilters(years) {
+    if (years.length === 0) return [];
+    const wrap = document.createElement("div");
+    wrap.className = "gptbd-year-filters";
+    wrap.setAttribute("role", "group");
+    wrap.setAttribute("aria-label", "Filter cached chats by year");
+
+    ["all", ...years].forEach(year => {
+      const isAll = year === "all";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "gptbd-year-chip";
+      button.dataset.action = "filter-year";
+      button.dataset.year = String(year);
+      button.dataset.active = String(String(STATE.selectedYear) === String(year));
+      button.textContent = isAll ? "All" : String(year);
+      wrap.appendChild(button);
+    });
+
+    return [wrap];
   }
 
   /* ─────────────────────────── SIDEBAR HELPERS ──────────────────────────── */
@@ -1529,6 +1493,125 @@
     if (warningText) warningText.textContent = DEFAULT_DELETE_MODAL_WARNING;
     if (warningCheckWrap) warningCheckWrap.hidden = false;
     if (skipWarningCheckWrap) skipWarningCheckWrap.hidden = false;
+  }
+
+  function createTemplateFragment(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<body>${html}</body>`, "text/html");
+    const fragment = document.createDocumentFragment();
+    Array.from(doc.body.childNodes).forEach(node => {
+      fragment.appendChild(document.importNode(node, true));
+    });
+    return fragment;
+  }
+
+  function replaceChildren(parent, children) {
+    if (!(parent instanceof Element)) return;
+    parent.replaceChildren(...children);
+  }
+
+  function buildDeletePreviewItems(shownTitles, remaining) {
+    const nodes = shownTitles.map(title => buildPreviewItem(title));
+    if (remaining > 0) {
+      const more = document.createElement("div");
+      more.className = "gptbd-modal__preview-more";
+      more.textContent = `+\u202f${remaining}\u00a0more\u2026`;
+      nodes.push(more);
+    }
+    return nodes;
+  }
+
+  function buildClearCachePreviewItems() {
+    return [
+      buildPreviewItem("Your chats in ChatGPT will not be deleted."),
+      buildPreviewItem("You will need to click Sync all again to restore the cached list.")
+    ];
+  }
+
+  function buildPreviewItem(text) {
+    const item = document.createElement("div");
+    item.className = "gptbd-modal__preview-item";
+
+    const bullet = document.createElement("span");
+    bullet.className = "gptbd-modal__preview-bullet";
+    bullet.setAttribute("aria-hidden", "true");
+
+    const label = document.createElement("span");
+    label.className = "gptbd-modal__preview-text";
+    label.textContent = text;
+
+    item.append(bullet, label);
+    return item;
+  }
+
+  function buildEmptyState(message, isNotice = false) {
+    const empty = document.createElement("div");
+    empty.className = `gptbd-empty${isNotice ? " gptbd-empty--notice" : ""}`;
+    empty.textContent = message;
+    return empty;
+  }
+
+  function buildResultsPanelNodes(results) {
+    const nodes = [buildResultsHeader()];
+    results.forEach(conversation => nodes.push(buildResultRow(conversation)));
+    return nodes;
+  }
+
+  function buildResultsHeader() {
+    const header = document.createElement("div");
+    header.className = "gptbd-results-header";
+    header.setAttribute("aria-hidden", "true");
+
+    const title = document.createElement("span");
+    title.className = "gptbd-results-header__title";
+    title.textContent = "Chat";
+
+    const date = document.createElement("span");
+    date.className = "gptbd-results-header__date";
+    date.textContent = "Date";
+
+    const open = document.createElement("span");
+    open.className = "gptbd-results-header__open";
+    open.textContent = "Open";
+
+    header.append(title, date, open);
+    return header;
+  }
+
+  function buildResultRow(conversation) {
+    const row = document.createElement("div");
+    row.className = "gptbd-result";
+
+    const label = document.createElement("label");
+    label.className = "gptbd-result-main";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "gptbd-result-checkbox";
+    checkbox.dataset.id = conversation.id;
+    checkbox.checked = STATE.selectedIds.has(conversation.id);
+
+    const title = document.createElement("span");
+    title.className = "gptbd-result-title";
+    title.textContent = conversation.title || "Untitled chat";
+
+    label.append(checkbox, title);
+
+    const date = document.createElement("span");
+    const dateText = formatConversationDate(conversation.updateTime);
+    date.className = "gptbd-result-date";
+    date.title = dateText;
+    date.textContent = dateText;
+
+    const open = document.createElement("a");
+    open.className = "gptbd-result-open";
+    open.href = `/c/${encodeURIComponent(conversation.id)}`;
+    open.target = "_blank";
+    open.rel = "noopener noreferrer";
+    open.textContent = "Open ↗";
+
+    row.append(label, date, open);
+    return row;
   }
 
   function isElementVisible(element) {
