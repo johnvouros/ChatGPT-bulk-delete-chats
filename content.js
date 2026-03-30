@@ -139,6 +139,12 @@
               <span class="gptbd-meta-pill" data-role="cache-count" hidden></span>
               <span class="gptbd-meta-dot" data-role="sync-dot" aria-hidden="true" hidden>·</span>
               <span class="gptbd-meta-text" data-role="last-sync" hidden></span>
+              <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+              <span class="gptbd-meta-text">local-only</span>
+              <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+              <span class="gptbd-meta-text">delete is permanent</span>
+              <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+              <span class="gptbd-meta-text">v1.0.0</span>
             </div>
           </div>
 
