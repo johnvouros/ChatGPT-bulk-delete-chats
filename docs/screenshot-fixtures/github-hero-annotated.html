@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GitHub Hero Annotated</title>
+    <style>
+      :root {
+        --bg-1: #07111f;
+        --bg-2: #140d1f;
+        --panel: rgba(14, 19, 32, 0.72);
+        --panel-border: rgba(255, 255, 255, 0.08);
+        --text: #f8fafc;
+        --muted: #a5b4c7;
+        --mint: #34d399;
+        --mint-soft: rgba(52, 211, 153, 0.18);
+        --rose: #fb7185;
+        --rose-soft: rgba(251, 113, 133, 0.18);
+        --amber: #fbbf24;
+        --shadow: 0 30px 80px rgba(0, 0, 0, 0.42);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 1600px;
+        height: 820px;
+        overflow: hidden;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at 18% 18%, rgba(52, 211, 153, 0.18), transparent 28%),
+          radial-gradient(circle at 84% 10%, rgba(251, 113, 133, 0.14), transparent 24%),
+          linear-gradient(135deg, var(--bg-1) 0%, #09101d 40%, var(--bg-2) 100%);
+        background-color: #09101d;
+        color: var(--text);
+      }
+
+      body {
+        position: relative;
+      }
+
+      .grain {
+        position: absolute;
+        inset: 0;
+        opacity: 0.08;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+        background-size: 120px 120px;
+        mask-image: radial-gradient(circle at center, black, transparent 85%);
+      }
+
+      .canvas {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        padding: 44px 50px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: #d1fae5;
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        backdrop-filter: blur(14px);
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: linear-gradient(180deg, #6ee7b7, #10b981);
+        box-shadow: 0 0 16px rgba(52, 211, 153, 0.65);
+      }
+
+      h1 {
+        margin: 22px 0 14px;
+        max-width: 560px;
+        font-size: 58px;
+        line-height: 0.96;
+        letter-spacing: -0.04em;
+      }
+
+      .subhead {
+        max-width: 520px;
+        margin: 0 0 24px;
+        font-size: 21px;
+        line-height: 1.35;
+        color: var(--muted);
+      }
+
+      .feature-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-bottom: 20px;
+        max-width: 540px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 11px 16px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.04);
+        color: #e2e8f0;
+        font-size: 17px;
+        font-weight: 600;
+      }
+
+      .pill::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--mint);
+      }
+
+      .stage {
+        position: absolute;
+        right: 36px;
+        bottom: 26px;
+        width: 960px;
+        height: 610px;
+        overflow: visible;
+      }
+
+      .image-card {
+        position: absolute;
+        inset: 0;
+        border-radius: 28px;
+        padding: 18px;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.02)),
+          rgba(15, 23, 42, 0.36);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .image-card img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center top;
+        border-radius: 18px;
+      }
+
+      .callout {
+        position: absolute;
+        width: 250px;
+        padding: 16px 18px;
+        border-radius: 18px;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
+        backdrop-filter: blur(18px);
+      }
+
+      .callout h2 {
+        margin: 0 0 6px;
+        font-size: 19px;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+      }
+
+      .callout p {
+        margin: 0;
+        color: #c7d2e1;
+        font-size: 14px;
+        line-height: 1.4;
+      }
+
+      .callout--mint {
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.32), 0 0 0 1px rgba(52, 211, 153, 0.12);
+      }
+
+      .callout--rose {
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.32), 0 0 0 1px rgba(251, 113, 133, 0.12);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        margin-bottom: 10px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .callout--mint .badge {
+        color: #d1fae5;
+        background: var(--mint-soft);
+      }
+
+      .callout--rose .badge {
+        color: #ffe4e6;
+        background: var(--rose-soft);
+      }
+
+      .callout--amber .badge {
+        color: #fef3c7;
+        background: rgba(251, 191, 36, 0.16);
+      }
+
+      .sync { top: 154px; left: -66px; }
+
+      .search { top: 332px; left: -60px; }
+
+      .review { bottom: 26px; right: -26px; }
+
+      .delete { top: 62px; right: -22px; }
+
+      .footer-note {
+        position: absolute;
+        left: 50px;
+        bottom: 42px;
+        max-width: 360px;
+        color: #94a3b8;
+        font-size: 15px;
+        line-height: 1.45;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="grain"></div>
+    <div class="canvas">
+      <div class="eyebrow">Chrome extension for ChatGPT cleanup</div>
+      <h1>Find old chats fast. Review them. Delete in bulk.</h1>
+      <p class="subhead">
+        A product-style overview that shows exactly what users care about most:
+        full-history sync, instant search, safe review, and quick bulk cleanup.
+      </p>
+
+      <div class="feature-row">
+        <div class="pill">Sync full history locally</div>
+        <div class="pill">Search by keyword or exact match</div>
+        <div class="pill">Open any chat before deleting</div>
+      </div>
+
+      <div class="stage">
+        <div class="image-card">
+          <img src="../screenshots/fullview.png" alt="Full ChatGPT Bulk Delete UI" />
+        </div>
+
+        <div class="callout callout--mint sync">
+          <div class="badge">1. Sync</div>
+          <h2>Pull your full chat history</h2>
+          <p>Cache old chats locally so you can search far beyond what is visible in the sidebar.</p>
+        </div>
+
+        <div class="callout callout--mint search">
+          <div class="badge">2. Search</div>
+          <h2>Filter old conversations instantly</h2>
+          <p>Use keyword search and year chips to narrow thousands of chats down in seconds.</p>
+        </div>
+        <div class="callout callout--amber review">
+          <div class="badge">3. Review</div>
+          <h2>Open before you delete</h2>
+          <p>Jump straight into a matching chat from the results list so you can verify it first.</p>
+        </div>
+
+        <div class="callout callout--rose delete">
+          <div class="badge">4. Clean up</div>
+          <h2>Bulk delete with guardrails</h2>
+          <p>Select multiple chats, then remove them with a confirmation warning to avoid mistakes.</p>
+        </div>
+      </div>
+
+      <div class="footer-note">
+        Local-only cache. No third-party server. Built to make years of chat cleanup feel fast and safe.
+      </div>
+    </div>
+  </body>
+</html>

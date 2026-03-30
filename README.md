@@ -2,6 +2,20 @@
 
 Find old chats fast. Check what you want gone. Delete them in bulk.
 
+## Screenshots
+
+### Overview
+
+![Annotated product overview](docs/screenshots/github-hero-annotated.png)
+
+### Full in-app view
+
+![Full ChatGPT Bulk Delete UI](docs/screenshots/fullview.png)
+
+### Delete confirmation
+
+![Delete confirmation warning](docs/screenshots/delete-warning.png)
+
 ## What It Does
 
 - Syncs your ChatGPT chat list into a local cache
