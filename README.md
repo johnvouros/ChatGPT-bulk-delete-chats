@@ -36,10 +36,13 @@ Sync your full chat list into a local cache, search by keyword or exact words, o
 
 ## Install
 
-1. Open `chrome://extensions`.
-2. Turn on Developer mode.
-3. Click `Load unpacked`.
-4. Select this folder.
+1. On GitHub, click the green `Code` button.
+2. Click `Download ZIP`.
+3. Extract the ZIP to a normal folder on your computer.
+4. Open `chrome://extensions`.
+5. Turn on Developer mode.
+6. Click `Load unpacked`.
+7. Select the extracted folder.
 
 ## Use
 
