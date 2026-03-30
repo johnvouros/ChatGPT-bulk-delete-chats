@@ -19,6 +19,16 @@ Yes, it is privacy-safe in the normal sense for a Chrome extension:
 - It only talks to ChatGPT/OpenAI endpoints already used by the site
 - No extra extension permissions are requested
 
+## License
+
+Source-available, non-commercial.
+
+- Personal and non-commercial use is allowed
+- Commercial or corporate use is not allowed without permission
+- If someone wants to use it commercially, they need a separate paid license
+
+See `LICENSE`.
+
 ## Use
 
 1. Load the folder in `chrome://extensions` with Developer mode on.
