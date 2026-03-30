@@ -3,6 +3,16 @@
   "name": "ChatGPT Bulk Delete",
   "version": "1.0.0",
   "description": "Select multiple ChatGPT conversations in the sidebar and delete them in one pass.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "chatgpt-bulk-delete@johnvouros.dev",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  },
   "permissions": [
     "storage"
   ],

@@ -3,7 +3,10 @@
 ![Version](https://img.shields.io/badge/version-1.0.0-3b82f6)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-10b981)
 ![ChatGPT](https://img.shields.io/badge/Works%20on-chatgpt.com-111827)
+![Firefox](https://img.shields.io/badge/Firefox-Compatible-f97316)
 ![Local Only](https://img.shields.io/badge/Local--only-No%20third--party%20server-22c55e)
+
+![Works on Chrome and Firefox](docs/browser-support.svg)
 
 Find old ChatGPT conversations fast, review them safely, and delete them in bulk.
 
@@ -36,6 +39,10 @@ Sync your full chat list into a local cache, search by keyword or exact words, o
 
 ## Install
 
+Use the same downloaded ZIP for both Chrome and Firefox. The extension files are the same; only the browser-specific install steps differ.
+
+### Chrome
+
 1. On GitHub, click the green `Code` button.
 2. Click `Download ZIP`.
 3. Extract the ZIP to a normal folder on your computer.
@@ -43,6 +50,17 @@ Sync your full chat list into a local cache, search by keyword or exact words, o
 5. Turn on Developer mode.
 6. Click `Load unpacked`.
 7. Select the extracted folder.
+
+### Firefox
+
+1. On GitHub, click the green `Code` button.
+2. Click `Download ZIP`.
+3. Extract the ZIP to a normal folder on your computer.
+4. Open `about:debugging#/runtime/this-firefox`.
+5. Click `Load Temporary Add-on...`.
+6. Select the `manifest.json` file inside the extracted folder.
+
+Note: Firefox temporary add-ons are removed when the browser restarts unless the extension is packaged and signed for a normal release.
 
 ## Use
 
