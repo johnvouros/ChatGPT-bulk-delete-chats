@@ -97,4 +97,7 @@ See [`LICENSE`](LICENSE).
 - `Resync` refreshes the cache if it gets stale.
 - `Exact` stops partial matches like `car` matching `care`.
 - `Clear local cache` only removes the extension's saved chat list on this browser.
+- Runtime compatibility checks disable broken destructive actions if ChatGPT changes unexpectedly.
+- Release notes: [`CHANGELOG.md`](CHANGELOG.md)
+- Versioning guide: [`VERSIONING.md`](VERSIONING.md)
 - Icons are in `icons/` and the source SVG is `icon-source.svg`.

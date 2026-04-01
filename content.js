@@ -16,8 +16,24 @@
     cacheLoadedAt: null,
     skipDeleteWarning: false,
     uiHidden: false,
+    health: {
+      checkedAt: 0,
+      running: false,
+      syncAvailable: true,
+      deleteApiAvailable: true,
+      deleteUiAvailable: true,
+      safeMode: false,
+      note: "",
+      issues: []
+    },
+    failureCounts: {
+      sync: 0,
+      deleteApi: 0,
+      deleteUi: 0
+    },
     observer: null,
-    refreshTimer: null
+    refreshTimer: null,
+    healthTimer: null
   };
 
   const CACHE_KEY = "gptbd-conversation-cache-v1";
@@ -33,6 +49,9 @@
   };
   const DEFAULT_DELETE_MODAL_SUBTITLE = "Permanent. ChatGPT does not support undo.";
   const DEFAULT_DELETE_MODAL_WARNING = "Delete is permanent and cannot be recovered.";
+  const CAPABILITY_REFRESH_MS = 10 * 60 * 1000;
+  const CAPABILITY_RETRY_MS = 90 * 1000;
+  const CAPABILITY_FAILURE_THRESHOLD = 2;
 
   /* ───────────────────────────── SELECTORS ──────────────────────────────── */
   const SELECTORS = {
@@ -61,6 +80,7 @@
 
   /* modal resolve handle — set by showDeleteModal, cleared on resolution */
   let activeModalResolve = null;
+  let runtimeBridgeReady = false;
 
   /* ─────────────────────────────── BOOT ─────────────────────────────────── */
   function boot() {
@@ -69,7 +89,17 @@
     refreshConversationRows();
     observeDom();
     observePreferenceChanges();
+    setupRuntimeBridge();
     render();
+    window.addEventListener("focus", () => {
+      void ensureCapabilityHealth({ force: isCapabilityHealthStale(), silent: true });
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        void ensureCapabilityHealth({ force: isCapabilityHealthStale(), silent: true });
+      }
+    });
+    void ensureCapabilityHealth({ force: true, silent: true });
   }
 
   /* ───────────────────────────── SHELL HTML ─────────────────────────────── */
@@ -184,6 +214,8 @@
             <span class="gptbd-meta-text">delete is permanent</span>
             <span class="gptbd-meta-dot" data-role="match-meta-dot" hidden>·</span>
             <span class="gptbd-meta-text" data-role="match-count" hidden></span>
+            <span class="gptbd-meta-dot" data-role="health-note-dot" hidden>·</span>
+            <span class="gptbd-meta-text gptbd-meta-text--warning" data-role="health-note" hidden></span>
             <span class="gptbd-meta-dot" data-role="jump-hint-dot" hidden>·</span>
             <span class="gptbd-meta-text gptbd-meta-text--hint" data-role="jump-hint" hidden>
               Scroll the sidebar to select chats
@@ -299,6 +331,7 @@
       const action = el.dataset.action;
 
       if (action === "toggle") {
+        const wasEnabled = STATE.enabled;
         STATE.enabled = !STATE.enabled;
         if (!STATE.enabled) {
           STATE.selectedIds.clear();
@@ -306,6 +339,11 @@
         }
         refreshConversationRows();
         render();
+        if (!wasEnabled && STATE.enabled) {
+          window.setTimeout(() => {
+            jumpToFirstConversationRow();
+          }, 80);
+        }
         return;
       }
 
@@ -439,6 +477,7 @@
       window.clearTimeout(STATE.refreshTimer);
       STATE.refreshTimer = window.setTimeout(() => {
         refreshConversationRows();
+        void ensureCapabilityHealth({ force: false, silent: true });
         render();
       }, 150);
     });
@@ -458,6 +497,7 @@
     const matchCount = getSearchResults().length;
     const hasCache = STATE.cachedConversations.length > 0;
     const busy = STATE.deleting || STATE.syncingAll;
+    const health = STATE.health;
 
     /* Toggle button */
     const toggleLabel = toolbar.querySelector('[data-role="toggle-label"]');
@@ -471,10 +511,17 @@
     /* Sync button */
     const syncBtn = toolbar.querySelector('[data-action="sync-all"]');
     const syncLabel = toolbar.querySelector('[data-role="sync-label"]');
-    if (syncLabel) syncLabel.textContent = STATE.syncingAll ? "Syncing…" : hasCache ? "Resync" : "Sync all";
+    if (syncLabel) {
+      syncLabel.textContent = STATE.syncingAll
+        ? "Syncing…"
+        : health.syncAvailable ? (hasCache ? "Resync" : "Sync all") : "Sync unavailable";
+    }
     if (syncBtn) {
-      syncBtn.disabled = busy;
+      syncBtn.disabled = busy || !health.syncAvailable;
       syncBtn.dataset.spinning = String(STATE.syncingAll);
+      syncBtn.title = health.syncAvailable
+        ? "Download full conversation list from ChatGPT API"
+        : "Sync is temporarily unavailable until compatibility checks pass";
     }
 
     /* Sync meta */
@@ -537,6 +584,14 @@
     }
     if (matchMetaDotEl) matchMetaDotEl.hidden = !(STATE.searchTerm || STATE.selectedYear !== "all");
 
+    const healthNoteEl = toolbar.querySelector('[data-role="health-note"]');
+    const healthNoteDotEl = toolbar.querySelector('[data-role="health-note-dot"]');
+    if (healthNoteEl) {
+      healthNoteEl.textContent = health.note || "";
+      healthNoteEl.hidden = !health.note;
+    }
+    if (healthNoteDotEl) healthNoteDotEl.hidden = !health.note;
+
     const shouldShowJumpHint = STATE.enabled && !busy && needsJumpToChatsHint();
     if (jumpHintDotEl) jumpHintDotEl.hidden = !shouldShowJumpHint;
     if (jumpHintEl) jumpHintEl.hidden = !shouldShowJumpHint;
@@ -551,11 +606,14 @@
     const yearFiltersHost = toolbar.querySelector('[data-role="year-filters"]');
     const selectableCount = getSelectableConversationIds().length;
     const showingCachedResults = STATE.cachedConversations.length > 0;
-    if (selectAllBtn) selectAllBtn.disabled = busy || selectableCount === 0;
+    if (selectAllBtn) selectAllBtn.disabled = busy || selectableCount === 0 || !canDeleteSelection(getSelectableConversationIds());
     if (clearBtn) clearBtn.disabled = selectedCount === 0 || busy;
     if (sortBtn) {
       sortBtn.disabled = busy || !showingCachedResults;
-      sortBtn.textContent = STATE.cachedSortOrder === "newest" ? "Newest first" : "Oldest first";
+      sortBtn.textContent = STATE.cachedSortOrder === "newest" ? "Sort: Newest ↓" : "Sort: Oldest ↑";
+      sortBtn.title = STATE.cachedSortOrder === "newest"
+        ? "Sorting by newest first. Click to switch to oldest first."
+        : "Sorting by oldest first. Click to switch to newest first.";
     }
     if (toggleResultsBtn) {
       toggleResultsBtn.disabled = busy || !showingCachedResults;
@@ -578,7 +636,12 @@
     /* Delete button */
     const deleteBtn = toolbar.querySelector('[data-action="delete"]');
     const deleteLabelEl = toolbar.querySelector('[data-role="delete-label"]');
-    if (deleteBtn) deleteBtn.disabled = selectedCount === 0 || busy;
+    if (deleteBtn) {
+      deleteBtn.disabled = selectedCount === 0 || busy || !canDeleteSelection();
+      deleteBtn.title = canDeleteSelection()
+        ? "Delete selected conversations (you will be asked to confirm)"
+        : "Delete is temporarily unavailable until compatibility checks pass";
+    }
     if (deleteLabelEl) {
       if (STATE.deleting) {
         deleteLabelEl.textContent = `Deleting ${STATE.deleteProgress.current}\u2009/\u2009${STATE.deleteProgress.total}`;
@@ -875,6 +938,16 @@
     const ids = Array.from(STATE.selectedIds);
     if (ids.length === 0 || STATE.deleting) return;
 
+    await ensureCapabilityHealth({ force: isCapabilityHealthStale(), silent: true });
+    if (!STATE.health.deleteApiAvailable && !STATE.health.deleteUiAvailable) {
+      showToast(STATE.health.note || "Delete is temporarily unavailable. Refresh ChatGPT and try again.");
+      return;
+    }
+    if (!canDeleteSelection(ids)) {
+      showToast("Delete is limited to chats currently visible in the sidebar until ChatGPT compatibility checks pass again.");
+      return;
+    }
+
     /* Resolve display titles for the preview list */
     const titles = ids.map(id => {
       const cached = STATE.cachedConversations.find(c => c.id === id);
@@ -1053,35 +1126,58 @@
     if (apiDeleted) return true;
 
     const row = document.querySelector(`[data-gptbd-conversation-id="${CSS.escape(id)}"]`);
-    if (!row) return false;
+    if (!row) {
+      registerCapabilityFailure("deleteUi", "Chat row was not available for UI fallback.");
+      return false;
+    }
 
     row.scrollIntoView({ block: "center" });
     revealRowActions(row);
     await delay(220);
 
     const menuButton = findMenuButton(row);
-    if (!menuButton) return false;
+    if (!menuButton) {
+      registerCapabilityFailure("deleteUi", "Could not find the conversation menu button.");
+      return false;
+    }
 
     const menuSurfacesBefore = getVisibleMenuSurfaces();
     openConversationMenu(menuButton);
     const menuSurface = await waitForMenuSurface(menuSurfacesBefore);
     const deleteControl = await waitForDeleteMenuItem(menuSurface);
-    if (!deleteControl) { dismissOpenMenus(); return false; }
+    if (!deleteControl) {
+      dismissOpenMenus();
+      registerCapabilityFailure("deleteUi", "Could not find the delete action in the conversation menu.");
+      return false;
+    }
 
     const dialogsBefore = getVisibleDialogs();
     deleteControl.click();
 
     const confirmButton = await waitForDeleteConfirmButton(dialogsBefore);
-    if (!confirmButton) { dismissOpenMenus(); return false; }
+    if (!confirmButton) {
+      dismissOpenMenus();
+      registerCapabilityFailure("deleteUi", "Could not find the delete confirmation dialog.");
+      return false;
+    }
 
     confirmButton.click();
-    return waitForConversationRemoval(id, 5000);
+    const removed = await waitForConversationRemoval(id, 5000);
+    if (removed) {
+      registerCapabilitySuccess("deleteUi");
+      return true;
+    }
+    registerCapabilityFailure("deleteUi", "UI delete did not remove the conversation.");
+    return false;
   }
 
   async function deleteConversationByApi(id) {
     try {
       const accessToken = await getAccessToken();
-      if (!accessToken) return false;
+      if (!accessToken) {
+        registerCapabilityFailure("deleteApi", "Could not read the ChatGPT session token.");
+        return false;
+      }
 
       const response = await fetch(`/backend-api/conversation/${encodeURIComponent(id)}`, {
         method: "PATCH",
@@ -1093,9 +1189,19 @@
         body: JSON.stringify({ is_visible: false })
       });
 
-      if (!response.ok) return false;
-      return await waitForConversationRemoval(id, 3000);
+      if (!response.ok) {
+        registerCapabilityFailure("deleteApi", `Delete API returned ${response.status}.`);
+        return false;
+      }
+      const removed = await waitForConversationRemoval(id, 3000);
+      if (removed) {
+        registerCapabilitySuccess("deleteApi");
+        return true;
+      }
+      registerCapabilityFailure("deleteApi", "Delete API returned success but the conversation stayed visible.");
+      return false;
     } catch (_) {
+      registerCapabilityFailure("deleteApi", "Delete API request failed.");
       return false;
     }
   }
@@ -1177,22 +1283,33 @@
   /* ──────────────────────────── SYNC ALL ────────────────────────────────── */
   async function syncAllChats() {
     if (STATE.syncingAll || STATE.deleting) return;
+    await ensureCapabilityHealth({ force: isCapabilityHealthStale(), silent: true });
+    if (!STATE.health.syncAvailable) {
+      showToast(STATE.health.note || "Sync is temporarily unavailable. Refresh ChatGPT and try again.");
+      return;
+    }
+
     STATE.syncingAll = true;
     render();
 
     try {
       const accessToken = await getAccessToken();
       if (!accessToken) {
+        registerCapabilityFailure("sync", "Could not read your ChatGPT session.");
         showToast("Could not read your ChatGPT session. Refresh the page and try again.");
         return;
       }
       const conversations = await fetchAllConversations(accessToken);
+      registerCapabilitySuccess("sync");
       STATE.cachedConversations = conversations;
       STATE.cacheLoadedAt = Date.now();
       persistCache();
+      await ensureCapabilityHealth({ force: true, silent: true });
       render();
       showToast(`Synced ${conversations.length.toLocaleString()} chats to cache.`);
     } catch (error) {
+      registerCapabilityFailure("sync", error instanceof Error ? error.message : "Sync failed.");
+      await ensureCapabilityHealth({ force: true, silent: true });
       const message = error instanceof Error && error.message
         ? error.message
         : "Sync failed. Refresh ChatGPT and try again.";
@@ -1218,7 +1335,10 @@
       if (!response.ok) throw new Error(`Conversation sync failed: ${response.status}`);
 
       const data = await response.json();
-      const items = Array.isArray(data?.items) ? data.items : [];
+      if (!Array.isArray(data?.items)) {
+        throw new Error("Conversation sync failed: unexpected response shape.");
+      }
+      const items = data.items;
 
       items.forEach(item => {
         if (!item?.id || seen.has(item.id)) return;
@@ -1351,6 +1471,246 @@
     }
   }
 
+  async function ensureCapabilityHealth(options = {}) {
+    const force = Boolean(options.force);
+    if (!force && !isCapabilityHealthStale()) return STATE.health;
+    if (STATE.health.running) return STATE.health;
+
+    STATE.health.running = true;
+    try {
+      const [api, ui] = await Promise.all([
+        probeApiHealth(),
+        Promise.resolve(probeUiHealth())
+      ]);
+      STATE.health = buildCapabilityHealth(api, ui);
+      scheduleCapabilityHealthRefresh(STATE.health.safeMode ? CAPABILITY_RETRY_MS : CAPABILITY_REFRESH_MS);
+    } finally {
+      STATE.health.running = false;
+      render();
+    }
+
+    if (!options.silent && STATE.health.note) showToast(STATE.health.note);
+    return STATE.health;
+  }
+
+  function setupRuntimeBridge() {
+    if (runtimeBridgeReady || !chrome?.runtime?.onMessage) return;
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (!message || typeof message !== "object") return false;
+
+      if (message.type === "gptbd:get-compatibility-status") {
+        sendResponse({
+          ok: true,
+          report: createCompatibilityReport(false)
+        });
+        return false;
+      }
+
+      if (message.type === "gptbd:run-compatibility-check") {
+        void (async () => {
+          try {
+            await ensureCapabilityHealth({ force: true, silent: true });
+            refreshConversationRows();
+            render();
+            sendResponse({
+              ok: true,
+              report: createCompatibilityReport(true)
+            });
+          } catch (error) {
+            sendResponse({
+              ok: false,
+              error: error instanceof Error ? error.message : "Compatibility check failed."
+            });
+          }
+        })();
+        return true;
+      }
+
+      return false;
+    });
+    runtimeBridgeReady = true;
+  }
+
+  function isCapabilityHealthStale() {
+    return !STATE.health.checkedAt || (Date.now() - STATE.health.checkedAt) > CAPABILITY_REFRESH_MS;
+  }
+
+  async function probeApiHealth() {
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      return {
+        syncAvailable: false,
+        deleteApiAvailable: false,
+        issues: ["ChatGPT session unavailable."]
+      };
+    }
+
+    try {
+      const response = await fetch("/backend-api/conversations?offset=0&limit=1", {
+        credentials: "include",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+
+      if (!response.ok) {
+        return {
+          syncAvailable: false,
+          deleteApiAvailable: false,
+          issues: [`ChatGPT API returned ${response.status}.`]
+        };
+      }
+
+      const data = await response.json();
+      if (!Array.isArray(data?.items)) {
+        return {
+          syncAvailable: false,
+          deleteApiAvailable: false,
+          issues: ["ChatGPT API response shape changed."]
+        };
+      }
+
+      return {
+        syncAvailable: true,
+        deleteApiAvailable: true,
+        issues: []
+      };
+    } catch (_) {
+      return {
+        syncAvailable: false,
+        deleteApiAvailable: false,
+        issues: ["ChatGPT API could not be reached."]
+      };
+    }
+  }
+
+  function probeUiHealth() {
+    const rows = getConversationRows();
+    if (rows.length === 0) {
+      return {
+        deleteUiAvailable: true,
+        issues: []
+      };
+    }
+
+    const hasMenuButton = rows.some(({ row }) => Boolean(findMenuButton(row)));
+    return {
+      deleteUiAvailable: hasMenuButton,
+      issues: hasMenuButton ? [] : ["Sidebar action menu is unavailable."]
+    };
+  }
+
+  function buildCapabilityHealth(api, ui) {
+    const syncAvailable = Boolean(api.syncAvailable);
+    const deleteApiAvailable = Boolean(api.deleteApiAvailable);
+    const deleteUiAvailable = Boolean(ui.deleteUiAvailable);
+    const issues = [...api.issues, ...ui.issues];
+    let note = "";
+    let safeMode = false;
+
+    if (!syncAvailable && !deleteApiAvailable && !deleteUiAvailable) {
+      safeMode = true;
+      note = "Bulk actions paused. ChatGPT changed something.";
+    } else if (!syncAvailable && deleteUiAvailable) {
+      note = "Sync unavailable. Delete limited to visible chats.";
+    } else if (!deleteApiAvailable && deleteUiAvailable) {
+      note = "Delete fallback active. Only visible chats are safe to remove.";
+    }
+
+    return {
+      checkedAt: Date.now(),
+      running: false,
+      syncAvailable,
+      deleteApiAvailable,
+      deleteUiAvailable,
+      safeMode,
+      note,
+      issues
+    };
+  }
+
+  function createCompatibilityReport(ranNow = false) {
+    const health = STATE.health;
+    const mode = health.safeMode
+      ? "paused"
+      : health.syncAvailable && health.deleteApiAvailable
+        ? "healthy"
+        : health.deleteUiAvailable
+          ? "fallback"
+          : "degraded";
+
+    const summary = {
+      healthy: "ChatGPT compatibility looks healthy.",
+      fallback: "ChatGPT changed slightly. Sync or API delete is limited, but the UI fallback is still available.",
+      degraded: "ChatGPT compatibility is degraded. Some actions may be unavailable.",
+      paused: "Bulk actions are paused until ChatGPT compatibility recovers."
+    }[mode];
+
+    return {
+      mode,
+      summary,
+      note: health.note || "",
+      checkedAt: health.checkedAt || 0,
+      ranNow,
+      issues: [...health.issues],
+      capabilities: {
+        sync: Boolean(health.syncAvailable),
+        deleteApi: Boolean(health.deleteApiAvailable),
+        deleteUi: Boolean(health.deleteUiAvailable)
+      }
+    };
+  }
+
+  function canDeleteSelection(ids = Array.from(STATE.selectedIds)) {
+    if (ids.length === 0) return false;
+    if (STATE.health.deleteApiAvailable) return true;
+    if (!STATE.health.deleteUiAvailable) return false;
+    return ids.every(id => Boolean(document.querySelector(`[data-gptbd-conversation-id="${CSS.escape(id)}"]`)));
+  }
+
+  function registerCapabilitySuccess(kind) {
+    if (!(kind in STATE.failureCounts)) return;
+    STATE.failureCounts[kind] = 0;
+
+    if (kind === "sync") STATE.health.syncAvailable = true;
+    if (kind === "deleteApi") STATE.health.deleteApiAvailable = true;
+    if (kind === "deleteUi") STATE.health.deleteUiAvailable = true;
+
+    STATE.health.safeMode = !STATE.health.syncAvailable && !STATE.health.deleteApiAvailable && !STATE.health.deleteUiAvailable;
+    STATE.health.note = buildCapabilityHealth(
+      { syncAvailable: STATE.health.syncAvailable, deleteApiAvailable: STATE.health.deleteApiAvailable, issues: [] },
+      { deleteUiAvailable: STATE.health.deleteUiAvailable, issues: [] }
+    ).note;
+    STATE.health.checkedAt = Date.now();
+  }
+
+  function registerCapabilityFailure(kind, issue) {
+    if (!(kind in STATE.failureCounts)) return;
+    STATE.failureCounts[kind] += 1;
+    if (issue && !STATE.health.issues.includes(issue)) {
+      STATE.health.issues = [...STATE.health.issues, issue];
+    }
+    if (STATE.failureCounts[kind] < CAPABILITY_FAILURE_THRESHOLD) return;
+
+    if (kind === "sync") STATE.health.syncAvailable = false;
+    if (kind === "deleteApi") STATE.health.deleteApiAvailable = false;
+    if (kind === "deleteUi") STATE.health.deleteUiAvailable = false;
+
+    const recomputed = buildCapabilityHealth(
+      {
+        syncAvailable: STATE.health.syncAvailable,
+        deleteApiAvailable: STATE.health.deleteApiAvailable,
+        issues: STATE.health.issues
+      },
+      {
+        deleteUiAvailable: STATE.health.deleteUiAvailable,
+        issues: []
+      }
+    );
+    STATE.health = { ...STATE.health, ...recomputed, running: false };
+    STATE.health.checkedAt = Date.now();
+    scheduleCapabilityHealthRefresh(CAPABILITY_RETRY_MS);
+    render();
+  }
+
   async function refreshSidebarAfterDelete() {
     const beforeIds = getConversationRows().map(({ id }) => id).join(",");
     const beforeCount = getConversationRows().length;
@@ -1403,6 +1763,13 @@
     }
     if (!sidebarRefreshed) return `${deletedPart} Refresh the page if the sidebar looks stale.`;
     return deletedPart;
+  }
+
+  function scheduleCapabilityHealthRefresh(delayMs = CAPABILITY_REFRESH_MS) {
+    window.clearTimeout(STATE.healthTimer);
+    STATE.healthTimer = window.setTimeout(() => {
+      void ensureCapabilityHealth({ force: true, silent: true });
+    }, delayMs);
   }
 
   /* ───────────────────────────── CACHE ─────────────────────────────────── */

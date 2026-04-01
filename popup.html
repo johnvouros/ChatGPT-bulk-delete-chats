@@ -8,7 +8,7 @@
   </head>
   <body>
     <main class="popup">
-      <header class="popup__header">
+      <header class="popup__header" id="dev-toggle-target">
         <img class="popup__icon" src="icons/icon-48.png" alt="" />
         <div>
           <h1 class="popup__title">ChatGPT Bulk Delete</h1>
@@ -25,6 +25,33 @@
           <input id="toolbar-toggle" type="checkbox" />
           <span class="popup__switch" aria-hidden="true"></span>
         </label>
+      </section>
+
+      <section class="popup__section" id="compatibility-section" hidden>
+        <div class="popup__check-head">
+          <div>
+            <h2 class="popup__section-title">Compatibility</h2>
+            <p class="popup__section-note">Run this inside a live ChatGPT tab to verify sync and delete health.</p>
+          </div>
+          <button class="popup__button" id="compatibility-button" type="button">Run check</button>
+        </div>
+        <div class="popup__status" id="compatibility-status" data-state="idle">
+          <div class="popup__status-line">
+            <span class="popup__status-dot" aria-hidden="true"></span>
+            <span class="popup__status-title" id="compatibility-title">Not checked yet</span>
+          </div>
+          <p class="popup__status-summary" id="compatibility-summary">Open ChatGPT in the active tab, then run the check.</p>
+          <p class="popup__status-time" id="compatibility-time" hidden></p>
+          <ul class="popup__capabilities" id="compatibility-capabilities">
+            <li class="popup__capability"><span class="popup__capability-label">Sync API</span><span class="popup__capability-value" data-capability="sync">Unknown</span></li>
+            <li class="popup__capability"><span class="popup__capability-label">Delete API</span><span class="popup__capability-value" data-capability="deleteApi">Unknown</span></li>
+            <li class="popup__capability"><span class="popup__capability-label">UI fallback</span><span class="popup__capability-value" data-capability="deleteUi">Unknown</span></li>
+          </ul>
+          <ul class="popup__issues" id="compatibility-issues" hidden></ul>
+        </div>
+        <div class="popup__dev-actions">
+          <button class="popup__dev-link" id="hide-diagnostics-button" type="button">Hide diagnostics</button>
+        </div>
       </section>
 
       <section class="popup__section popup__section--compact">
