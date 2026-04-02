@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Bulk Delete",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Select multiple ChatGPT conversations in the sidebar and delete them in one pass.",
   "browser_specific_settings": {
     "gecko": {

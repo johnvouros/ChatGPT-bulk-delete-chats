@@ -8,6 +8,16 @@ This project follows a simple semantic versioning approach:
 - `MINOR`: new features that stay backward-compatible
 - `PATCH`: fixes, polish, and safe maintenance updates
 
+## [1.0.1] - 2026-04-02
+
+Maintenance update.
+
+- Added safer runtime compatibility checks so broken ChatGPT changes fail safely
+- Added a dev-only popup compatibility check for maintenance and troubleshooting
+- Restored sidebar jump behavior when entering `Select chats`
+- Clarified the sort control so it reads as an actual sort toggle
+- Polished popup behavior and release versioning support
+
 ## [1.0.0] - 2026-03-30
 
 Initial public release.

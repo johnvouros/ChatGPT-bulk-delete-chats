@@ -12,15 +12,9 @@ Find old ChatGPT conversations fast, review them safely, and delete them in bulk
 
 Sync your full chat list into a local cache, search by keyword or exact words, open any result to double-check it, then remove multiple chats in one pass.
 
+Chrome Web Store: [Install ChatGPT Bulk Delete](https://chromewebstore.google.com/detail/chatgpt-bulk-delete/nbecbefmhjidfmmfbpealakgpnnldcce?hl=en)
+
 ## Screenshots
-
-### Overview
-
-![Annotated product overview](docs/screenshots/github-hero-annotated.png)
-
-### In-app toolbar
-
-![Toolbar and search UI](docs/screenshots/toolbar.png)
 
 ### Full ChatGPT view
 
@@ -39,9 +33,13 @@ Sync your full chat list into a local cache, search by keyword or exact words, o
 
 ## Install
 
-Use the same downloaded ZIP for both Chrome and Firefox. The extension files are the same; only the browser-specific install steps differ.
-
 ### Chrome
+
+Install from the Chrome Web Store:
+
+- [ChatGPT Bulk Delete](https://chromewebstore.google.com/detail/chatgpt-bulk-delete/nbecbefmhjidfmmfbpealakgpnnldcce?hl=en)
+
+Manual dev install if you want the unpacked version:
 
 1. On GitHub, click the green `Code` button.
 2. Click `Download ZIP`.
@@ -52,6 +50,8 @@ Use the same downloaded ZIP for both Chrome and Firefox. The extension files are
 7. Select the extracted folder.
 
 ### Firefox
+
+Firefox install is currently manual:
 
 1. On GitHub, click the green `Code` button.
 2. Click `Download ZIP`.
