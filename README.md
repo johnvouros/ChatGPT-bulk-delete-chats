@@ -1,6 +1,6 @@
 # ChatGPT Bulk Delete
 
-![Version](https://img.shields.io/badge/version-1.0.0-3b82f6)
+![Version](https://img.shields.io/badge/version-1.0.1-3b82f6)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-10b981)
 ![ChatGPT](https://img.shields.io/badge/Works%20on-chatgpt.com-111827)
 ![Firefox](https://img.shields.io/badge/Firefox-Compatible-f97316)
@@ -12,7 +12,8 @@ Find old ChatGPT conversations fast, review them safely, and delete them in bulk
 
 Sync your full chat list into a local cache, search by keyword or exact words, open any result to double-check it, then remove multiple chats in one pass.
 
-Chrome Web Store: [Install ChatGPT Bulk Delete](https://chromewebstore.google.com/detail/chatgpt-bulk-delete/nbecbefmhjidfmmfbpealakgpnnldcce?hl=en)
+Chrome: [Install from Chrome Web Store](https://chromewebstore.google.com/detail/chatgpt-bulk-delete/nbecbefmhjidfmmfbpealakgpnnldcce?hl=en)  
+Firefox: [Install from Firefox Add-ons](https://addons.mozilla.org/en-GB/firefox/addon/chatgpt-chat-bulk-delete/)
 
 ## Screenshots
 
@@ -51,7 +52,11 @@ Manual dev install if you want the unpacked version:
 
 ### Firefox
 
-Firefox install is currently manual:
+Install from Firefox Add-ons:
+
+- [ChatGPT Chat Bulk Delete](https://addons.mozilla.org/en-GB/firefox/addon/chatgpt-chat-bulk-delete/)
+
+Manual dev install if you want the temporary unpacked version:
 
 1. On GitHub, click the green `Code` button.
 2. Click `Download ZIP`.
@@ -60,7 +65,7 @@ Firefox install is currently manual:
 5. Click `Load Temporary Add-on...`.
 6. Select the `manifest.json` file inside the extracted folder.
 
-Note: Firefox temporary add-ons are removed when the browser restarts unless the extension is packaged and signed for a normal release.
+Note: Firefox temporary add-ons are removed when the browser restarts unless you use the signed Add-ons store version above.
 
 ## Use
 
