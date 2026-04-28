@@ -8,6 +8,21 @@ This project follows a simple semantic versioning approach:
 - `MINOR`: new features that stay backward-compatible
 - `PATCH`: fixes, polish, and safe maintenance updates
 
+## [1.1.0] - 2026-04-28
+
+Feature update.
+
+- Updated extension, Chrome Web Store, and Firefox Add-ons icon assets from the corrected cropped app icon design
+- Updated the in-page toolbar mark to use the packaged extension icon
+- Added a neutral rate-extension pill after repeated use with Chrome and Firefox review links
+- Added a dev-mode popup switch to force-show or hide the rate-extension pill for testing
+- Added visible ChatGPT Project chat selection with project-scoped select-all behavior
+- Added a project scope selector so Project pages can switch between the current project list and synced account-wide chats
+- Added a known-project dropdown to the synced chat filters, using project memberships discovered from visited Project pages
+- Added a project-only list panel so users can filter, review, and select discovered project chats from the toolbar
+- Clarified project delete confirmation copy so users know chats are permanently deleted, not just removed from a project
+- Clarified empty project-filter results so users know to open a Project page and load its chat list before filtering by that project
+
 ## [1.0.1] - 2026-04-02
 
 Maintenance update.

@@ -59,6 +59,12 @@ body {
   font-weight: 600;
 }
 
+.popup__dev-control {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .popup__section-note {
   margin: 4px 0 0;
   font-size: 12px;
@@ -237,6 +243,10 @@ body {
   justify-content: space-between;
   gap: 14px;
   cursor: pointer;
+}
+
+.popup__toggle--dev {
+  align-items: flex-start;
 }
 
 .popup__toggle input {

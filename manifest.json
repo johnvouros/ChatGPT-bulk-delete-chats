@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Bulk Delete",
-  "version": "1.0.1",
-  "description": "Select multiple ChatGPT conversations in the sidebar and delete them in one pass.",
+  "version": "1.1.0",
+  "description": "Bulk delete ChatGPT chats faster with local search, year filters, and loaded Project chat selection.",
   "browser_specific_settings": {
     "gecko": {
       "id": "chatgpt-bulk-delete@johnvouros.dev",
@@ -20,6 +20,8 @@
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
     "48": "icons/icon-48.png",
+    "64": "icons/icon-64.png",
+    "96": "icons/icon-96.png",
     "128": "icons/icon-128.png"
   },
   "action": {
@@ -38,6 +40,17 @@
         "styles.css"
       ],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/icon-48.png"
+      ],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ]
     }
   ]
 }

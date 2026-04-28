@@ -1,6 +1,6 @@
 # ChatGPT Bulk Delete
 
-![Version](https://img.shields.io/badge/version-1.0.1-3b82f6)
+![Version](https://img.shields.io/badge/version-1.1.0-3b82f6)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-10b981)
 ![ChatGPT](https://img.shields.io/badge/Works%20on-chatgpt.com-111827)
 ![Firefox](https://img.shields.io/badge/Firefox-Compatible-f97316)
@@ -29,6 +29,7 @@ Firefox: [Install from Firefox Add-ons](https://addons.mozilla.org/en-GB/firefox
 
 - Syncs your ChatGPT chat list into a local cache
 - Lets you search by keyword or exact words
+- Filters synced chats by year and loaded Project chat membership
 - Opens any result in a new tab before you delete it
 - Bulk deletes selected chats with a confirmation warning
 
@@ -101,8 +102,9 @@ See [`LICENSE`](LICENSE).
 
 - `Resync` refreshes the cache if it gets stale.
 - `Exact` stops partial matches like `car` matching `care`.
+- Project chat filters work after you open a Project from the ChatGPT sidebar and scroll its chat list.
 - `Clear local cache` only removes the extension's saved chat list on this browser.
 - Runtime compatibility checks disable broken destructive actions if ChatGPT changes unexpectedly.
 - Release notes: [`CHANGELOG.md`](CHANGELOG.md)
 - Versioning guide: [`VERSIONING.md`](VERSIONING.md)
-- Icons are in `icons/` and the source SVG is `icon-source.svg`.
+- Icons are in `icons/`; the current cropped source PNG plus Chrome Web Store and Firefox Add-ons upload icons are in `docs/store-assets/`.

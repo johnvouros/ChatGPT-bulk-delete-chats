@@ -1,5 +1,8 @@
 const UI_HIDDEN_KEY = "gptbd-ui-hidden";
 const DEV_TOOLS_KEY = "gptbd-dev-tools";
+const REVIEW_SESSION_COUNT_KEY = "gptbd-review-session-count";
+const REVIEW_PROMPT_HIDDEN_KEY = "gptbd-review-prompt-hidden";
+const REVIEW_PROMPT_THRESHOLD = 3;
 const REPO_BASE_URL = "https://github.com/johnvouros/ChatGPT-bulk-delete-chats";
 const CHATGPT_HOSTS = new Set(["chatgpt.com", "chat.openai.com"]);
 const DOC_LINKS = {
@@ -16,14 +19,22 @@ async function initPopup() {
   const toggle = document.getElementById("toolbar-toggle");
   const compatibilityButton = document.getElementById("compatibility-button");
   const compatibilitySection = document.getElementById("compatibility-section");
+  const ratingPillToggle = document.getElementById("rating-pill-toggle");
   const hideDiagnosticsButton = document.getElementById("hide-diagnostics-button");
 
   if (versionLabel) versionLabel.textContent = `v${manifest.version}`;
   bindLinks();
 
-  const stored = await chrome.storage.local.get([UI_HIDDEN_KEY, DEV_TOOLS_KEY]);
+  const stored = await chrome.storage.local.get([
+    UI_HIDDEN_KEY,
+    DEV_TOOLS_KEY,
+    REVIEW_SESSION_COUNT_KEY,
+    REVIEW_PROMPT_HIDDEN_KEY
+  ]);
   const hidden = Boolean(stored?.[UI_HIDDEN_KEY]);
   const devToolsEnabled = Boolean(stored?.[DEV_TOOLS_KEY]);
+  const reviewSessionCount = normalizeStoredCount(stored?.[REVIEW_SESSION_COUNT_KEY]);
+  const reviewPromptHidden = Boolean(stored?.[REVIEW_PROMPT_HIDDEN_KEY]);
   if (toggle) {
     toggle.checked = !hidden;
     toggle.addEventListener("change", async () => {
@@ -33,6 +44,13 @@ async function initPopup() {
 
   if (compatibilitySection) {
     compatibilitySection.hidden = !devToolsEnabled;
+  }
+
+  if (ratingPillToggle) {
+    ratingPillToggle.checked = !reviewPromptHidden && reviewSessionCount >= REVIEW_PROMPT_THRESHOLD;
+    ratingPillToggle.addEventListener("change", async () => {
+      await setRatingPillVisible(ratingPillToggle.checked);
+    });
   }
 
   if (devToggleTarget && versionLabel) {
@@ -56,6 +74,23 @@ async function initPopup() {
   if (devToolsEnabled) {
     void loadCompatibilityStatus();
   }
+}
+
+async function setRatingPillVisible(visible) {
+  if (visible) {
+    await chrome.storage.local.set({
+      [REVIEW_PROMPT_HIDDEN_KEY]: false,
+      [REVIEW_SESSION_COUNT_KEY]: REVIEW_PROMPT_THRESHOLD
+    });
+    return;
+  }
+
+  await chrome.storage.local.set({ [REVIEW_PROMPT_HIDDEN_KEY]: true });
+}
+
+function normalizeStoredCount(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
 }
 
 function bindLinks() {
