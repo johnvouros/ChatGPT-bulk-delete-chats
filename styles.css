@@ -91,7 +91,7 @@
 .gptbd-section--search {
   flex: 0 1 210px;        /* can shrink, won't grow wider than 210px */
   min-width: 110px;
-  padding-left: 4px;      /* tighten gap from Select chats */
+  padding-left: 4px;      /* tighten gap from checkbox toggle */
   padding-right: 6px;
   overflow: hidden;       /* prevents inline controls overflowing into Resync */
 }

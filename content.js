@@ -14,6 +14,8 @@
     syncingAll: false,
     deleting: false,
     deleteProgress: { current: 0, total: 0 },
+    deleteCooldown: null,
+    accountKey: null,
     cachedConversations: [],
     projectIndex: { projects: [], memberships: {} },
     cacheLoadedAt: null,
@@ -38,12 +40,15 @@
     },
     observer: null,
     refreshTimer: null,
-    healthTimer: null
+    healthTimer: null,
+    deleteCooldownTimer: null
   };
 
   const CACHE_KEY = "gptbd-conversation-cache-v1";
   const SYNC_CHECKPOINT_KEY = "gptbd-sync-checkpoint-v1";
   const SYNC_CHECKPOINT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+  const DELETE_COOLDOWN_KEY = "gptbd-delete-cooldown-v1";
+  const DEFAULT_DELETE_COOLDOWN_MS = 2 * 60 * 1000;
   const PROJECT_CACHE_KEY = "gptbd-project-cache-v1";
   const UI_HIDDEN_KEY = "gptbd-ui-hidden";
   const SKIP_DELETE_WARNING_KEY = "gptbd-skip-delete-warning";
@@ -155,14 +160,15 @@
             <div class="gptbd-mark" aria-hidden="true">
               <img class="gptbd-mark-img" src="${MARK_ICON_URL}" alt="" decoding="async" />
             </div>
-            <button type="button" class="gptbd-btn gptbd-btn--toggle" data-action="toggle" title="Toggle bulk-select mode (Esc to exit)">
+            <button type="button" class="gptbd-btn gptbd-btn--toggle" data-action="toggle"
+                    title="Show selection checkboxes in the ChatGPT sidebar" aria-pressed="false">
               <svg class="gptbd-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <rect x="2" y="3" width="10" height="2" rx="1" fill="currentColor"/>
                 <rect x="2" y="7" width="10" height="2" rx="1" fill="currentColor"/>
                 <rect x="2" y="11" width="6" height="2" rx="1" fill="currentColor"/>
                 <rect x="13" y="2" width="2" height="12" rx="1" fill="currentColor" opacity="0.35"/>
               </svg>
-              <span data-role="toggle-label">Select chats</span>
+              <span data-role="toggle-label">Show sidebar checkboxes</span>
             </button>
           </div>
 
@@ -368,6 +374,9 @@
         refreshConversationRows();
         render();
         if (!wasEnabled && STATE.enabled && getPageContext().mode !== "project") {
+          if (!hasVisibleSidebarConversationRow()) {
+            showToast("Checkboxes are enabled. Open the ChatGPT sidebar to select chats.");
+          }
           window.setTimeout(() => {
             jumpToFirstConversationRow();
           }, 80);
@@ -571,23 +580,24 @@
     const hasCache = STATE.cachedConversations.length > 0;
     const busy = STATE.deleting || STATE.syncingAll;
     const health = STATE.health;
+    const deleteCoolingDown = isDeleteCoolingDown();
+    const hasVisibleSidebar = hasVisibleSidebarConversationRow();
 
     /* Toggle button */
     const toggleLabel = toolbar.querySelector('[data-role="toggle-label"]');
     const toggleBtn = toolbar.querySelector('[data-action="toggle"]');
-    if (toggleLabel) {
-      if (STATE.enabled) {
-        toggleLabel.textContent = "Exit";
-      } else {
-        toggleLabel.textContent = projectMode ? "Select project chats" : "Select chats";
-      }
-    }
+    const toggleCopy = GPTBDUi.getSelectionToggleCopy({
+      enabled: STATE.enabled,
+      projectMode,
+      hasVisibleSidebar
+    });
+    if (toggleLabel) toggleLabel.textContent = toggleCopy.label;
     if (toggleBtn) {
       toggleBtn.disabled = busy;
       toggleBtn.dataset.active = String(STATE.enabled);
-      toggleBtn.title = projectMode
-        ? "Toggle project chat selection mode (Esc to exit)"
-        : "Toggle bulk-select mode (Esc to exit)";
+      toggleBtn.title = toggleCopy.title;
+      toggleBtn.setAttribute("aria-label", toggleCopy.title);
+      toggleBtn.setAttribute("aria-pressed", String(STATE.enabled));
     }
 
     /* Sync button */
@@ -691,10 +701,16 @@
     }
     if (healthNoteDotEl) healthNoteDotEl.hidden = !health.note;
 
-    const shouldShowJumpHint = STATE.enabled && !busy && needsJumpToChatsHint();
+    const sidebarNeedsOpening = STATE.enabled && !projectMode && !hasVisibleSidebar;
+    const shouldShowJumpHint = STATE.enabled && !busy && (sidebarNeedsOpening || needsJumpToChatsHint());
+    if (jumpHintEl) {
+      jumpHintEl.textContent = sidebarNeedsOpening
+        ? "Open the ChatGPT sidebar to use checkboxes"
+        : "Scroll the sidebar to select chats";
+    }
     if (jumpHintDotEl) jumpHintDotEl.hidden = !shouldShowJumpHint;
     if (jumpHintEl) jumpHintEl.hidden = !shouldShowJumpHint;
-    if (jumpHintBtn) jumpHintBtn.hidden = !shouldShowJumpHint;
+    if (jumpHintBtn) jumpHintBtn.hidden = !shouldShowJumpHint || sidebarNeedsOpening;
 
     /* Selection buttons */
     const selectAllBtn = toolbar.querySelector('[data-action="select-all"]');
@@ -757,8 +773,10 @@
     const deleteBtn = toolbar.querySelector('[data-action="delete"]');
     const deleteLabelEl = toolbar.querySelector('[data-role="delete-label"]');
     if (deleteBtn) {
-      deleteBtn.disabled = selectedCount === 0 || busy || !canDeleteSelection();
-      deleteBtn.title = canDeleteSelection()
+      deleteBtn.disabled = selectedCount === 0 || busy || deleteCoolingDown || !canDeleteSelection();
+      deleteBtn.title = deleteCoolingDown
+        ? formatDeleteCooldownMessage()
+        : canDeleteSelection()
         ? projectMode
           ? "Delete selected project conversations permanently (you will be asked to confirm)"
           : "Delete selected conversations (you will be asked to confirm)"
@@ -785,7 +803,7 @@
           : 0;
         progressBar.style.width = `${pct}%`;
         if (progressLabel) progressLabel.textContent =
-          `${STATE.deleteProgress.current} of ${STATE.deleteProgress.total} deleted`;
+          `${STATE.deleteProgress.current} of ${STATE.deleteProgress.total} processed`;
       } else if (STATE.syncingAll) {
         progressWrap.dataset.visible = "true";
         progressWrap.dataset.indeterminate = "true";
@@ -816,6 +834,13 @@
 
   function getFirstConversationRow() {
     return getConversationRows()[0] || null;
+  }
+
+  function hasVisibleSidebarConversationRow() {
+    return getSidebarConversationLinks().some(link => {
+      const row = findConversationRow(link, "sidebar");
+      return isElementVisible(row);
+    });
   }
 
   function getSidebarConversationLinks() {
@@ -1296,6 +1321,16 @@
       showToast("Delete is limited to chats currently visible in the sidebar until ChatGPT compatibility checks pass again.");
       return;
     }
+    const currentSession = await getSessionContext();
+    const batchSession = STATE.health.deleteApiAvailable ? currentSession : null;
+    const cooldownScope = GPTBDDelete.resolveCooldownScope(currentSession, STATE.accountKey);
+    if (cooldownScope) await restoreDeleteCooldown(cooldownScope);
+    if (isDeleteCoolingDown(cooldownScope)) {
+      showToast(formatDeleteCooldownMessage());
+      scheduleDeleteCooldownEnd();
+      render();
+      return;
+    }
 
     /* Resolve display titles for the preview list */
     const titles = ids.map(id => {
@@ -1313,39 +1348,53 @@
     STATE.deleteProgress = { current: 0, total: ids.length };
     render();
 
-    let deleted = 0;
-    const failed = [];
+    let result = null;
     let sidebarRefreshed = false;
-
-    for (const id of ids) {
-      try {
-        const success = await deleteConversationById(id);
-        if (success) {
+    try {
+      result = await GPTBDDelete.runDeleteBatch({
+        ids,
+        deleteOne: id => deleteConversationById(id, batchSession),
+        delayImpl: delay,
+        minIntervalMs: 1200,
+        onDeleted(id) {
           STATE.selectedIds.delete(id);
           removeConversationRow(id);
           removeConversationFromCache(id);
-          deleted += 1;
-        } else {
-          failed.push(id);
+        },
+        onProgress(progress) {
+          STATE.deleteProgress.current = progress.processed;
+          refreshConversationRows();
+          render();
         }
-      } catch (_) {
-        failed.push(id);
+      });
+
+      if (result.rateLimitError && batchSession?.accountKey) {
+        const cooldownMs = result.rateLimitError.retryAfterMs || DEFAULT_DELETE_COOLDOWN_MS;
+        await persistDeleteCooldown(batchSession.accountKey, Date.now() + cooldownMs);
+        scheduleDeleteCooldownEnd();
       }
 
-      STATE.deleteProgress.current += 1;
-      refreshConversationRows();
+      if (result.deleted > 0 && !result.pauseError) {
+        sidebarRefreshed = await refreshSidebarAfterDelete();
+        refreshConversationRows();
+      }
+    } catch (_) {
+      showToast("Delete paused unexpectedly. No unconfirmed chats were removed from the cache.");
+      return;
+    } finally {
+      STATE.deleting = false;
       render();
     }
 
-    if (deleted > 0) {
-      sidebarRefreshed = await refreshSidebarAfterDelete();
-      refreshConversationRows();
-    }
-
-    STATE.deleting = false;
-    render();
-
-    showToast(buildDeleteSummary(deleted, failed.length, sidebarRefreshed));
+    const summary = result.pauseError && !result.rateLimitError
+      ? buildPausedDeleteSummary(result.deleted, result.failedIds.length, result.pauseError)
+      : buildDeleteSummary(
+        result.deleted,
+        result.failedIds.length,
+        sidebarRefreshed,
+        result.rateLimitError
+      );
+    showToast(summary);
   }
 
   /* Show the in-DOM confirmation modal; returns Promise<boolean> */
@@ -1483,8 +1532,8 @@
   }
 
   /* ───────────────────────── INDIVIDUAL DELETION ─────────────────────────── */
-  async function deleteConversationById(id) {
-    const apiDeleted = await deleteConversationByApi(id);
+  async function deleteConversationById(id, session) {
+    const apiDeleted = await deleteConversationByApi(id, session);
     if (apiDeleted) return true;
 
     const row = document.querySelector(`[data-gptbd-conversation-id="${CSS.escape(id)}"]`);
@@ -1533,15 +1582,15 @@
     return false;
   }
 
-  async function deleteConversationByApi(id) {
+  async function deleteConversationByApi(id, session, authRetried = false) {
     try {
-      const accessToken = await getAccessToken();
+      const accessToken = session?.accessToken || null;
       if (!accessToken) {
         registerCapabilityFailure("deleteApi", "Could not read the ChatGPT session token.");
         return false;
       }
 
-      const response = await fetch(`/backend-api/conversation/${encodeURIComponent(id)}`, {
+      const response = await GPTBDDelete.fetchWithTimeout(fetch, `/backend-api/conversation/${encodeURIComponent(id)}`, {
         method: "PATCH",
         credentials: "include",
         headers: {
@@ -1549,9 +1598,25 @@
           Authorization: `Bearer ${accessToken}`
         },
         body: JSON.stringify({ is_visible: false })
-      });
+      }, 30 * 1000);
 
       if (!response.ok) {
+        if (response.status === 429) {
+          throw new GPTBDDelete.DeleteRateLimitError(GPTBDDelete.parseRetryAfterMs(response));
+        }
+        if (response.status === 401 || response.status === 403) {
+          if (!authRetried) {
+            const refreshed = await getSessionContext();
+            if (refreshed?.accessToken && refreshed.accountKey === session?.accountKey) {
+              session.accessToken = refreshed.accessToken;
+              return deleteConversationByApi(id, session, true);
+            }
+          }
+          throw new GPTBDDelete.DeleteBatchPauseError(
+            "auth",
+            "Your ChatGPT session changed during the delete batch."
+          );
+        }
         registerCapabilityFailure("deleteApi", `Delete API returned ${response.status}.`);
         return false;
       }
@@ -1567,7 +1632,8 @@
       }
       registerCapabilityFailure("deleteApi", "Delete API returned success but the conversation stayed visible.");
       return false;
-    } catch (_) {
+    } catch (error) {
+      if (error instanceof GPTBDDelete.DeleteBatchPauseError) throw error;
       registerCapabilityFailure("deleteApi", "Delete API request failed.");
       return false;
     }
@@ -2055,9 +2121,18 @@
       const data = await response.json();
       const accessToken = data?.accessToken || null;
       if (!accessToken) return null;
+      const accountKey = data?.user?.id || data?.account?.id || getJwtSubject(accessToken);
+      if (accountKey && STATE.accountKey !== accountKey) {
+        STATE.accountKey = accountKey;
+        STATE.deleteCooldown = null;
+        void restoreDeleteCooldown(accountKey).then(() => {
+          if (isDeleteCoolingDown(accountKey)) scheduleDeleteCooldownEnd();
+          render();
+        });
+      }
       return {
         accessToken,
-        accountKey: data?.user?.id || data?.account?.id || getJwtSubject(accessToken)
+        accountKey
       };
     } catch (_) {
       return null;
@@ -2371,14 +2446,75 @@
     void clearSyncCheckpoint();
   }
 
-  function buildDeleteSummary(deleted, failedCount, sidebarRefreshed) {
+  function buildDeleteSummary(deleted, failedCount, sidebarRefreshed, rateLimitError = null) {
     const deletedPart = `Deleted ${deleted} conversation${deleted === 1 ? "" : "s"}.`;
+    if (rateLimitError instanceof GPTBDDelete.DeleteRateLimitError) {
+      const waitText = formatRateLimitWait(rateLimitError.retryAfterMs);
+      return `${deletedPart} ChatGPT paused delete requests; ${failedCount} selected chat${failedCount === 1 ? " was" : "s were"} left untouched. ${waitText}`;
+    }
     if (failedCount > 0) {
       const refreshNote = sidebarRefreshed ? "" : " Refresh the page if the list looks stale.";
       return `${deletedPart} ${failedCount} failed — try those again from the current list.${refreshNote}`;
     }
     if (!sidebarRefreshed) return `${deletedPart} Refresh the page if the list looks stale.`;
     return deletedPart;
+  }
+
+  function buildPausedDeleteSummary(deleted, failedCount, pauseError) {
+    const deletedPart = `Deleted ${deleted} conversation${deleted === 1 ? "" : "s"}.`;
+    const remainingPart = `${failedCount} selected chat${failedCount === 1 ? " was" : "s were"} left untouched.`;
+    if (pauseError?.reason === "auth") {
+      return `${deletedPart} Your ChatGPT session changed; ${remainingPart} Refresh ChatGPT, then click Delete again.`;
+    }
+    if (pauseError?.reason === "timeout") {
+      return `${deletedPart} A delete request timed out; ${remainingPart} Check your connection, then click Delete again.`;
+    }
+    return `${deletedPart} Delete paused; ${remainingPart} Click Delete again when ChatGPT is available.`;
+  }
+
+  function formatRateLimitWait(retryAfterMs) {
+    if (!retryAfterMs) return "Wait a few minutes, then click Delete again.";
+    if (retryAfterMs < 60 * 1000) {
+      return `Wait about ${Math.ceil(retryAfterMs / 1000)} seconds, then click Delete again.`;
+    }
+    return `Wait about ${Math.ceil(retryAfterMs / 60000)} minutes, then click Delete again.`;
+  }
+
+  function isDeleteCoolingDown(scopeKey = STATE.accountKey) {
+    return GPTBDDelete.isCooldownActive(STATE.deleteCooldown, scopeKey);
+  }
+
+  function formatDeleteCooldownMessage() {
+    const remainingMs = Math.max(0, Number(STATE.deleteCooldown?.until) - Date.now());
+    return `ChatGPT is rate-limiting deletes. ${formatRateLimitWait(remainingMs)}`;
+  }
+
+  async function persistDeleteCooldown(scopeKey, until) {
+    STATE.deleteCooldown = { scopeKey, until };
+    try {
+      await chrome.storage.local.set({ [DELETE_COOLDOWN_KEY]: STATE.deleteCooldown });
+    } catch (_) {}
+  }
+
+  async function restoreDeleteCooldown(scopeKey) {
+    try {
+      const stored = await chrome.storage.local.get(DELETE_COOLDOWN_KEY);
+      const cooldown = stored?.[DELETE_COOLDOWN_KEY] || null;
+      STATE.deleteCooldown = GPTBDDelete.isCooldownActive(cooldown, scopeKey) ? cooldown : null;
+      if (!STATE.deleteCooldown) await chrome.storage.local.remove(DELETE_COOLDOWN_KEY);
+    } catch (_) {
+      STATE.deleteCooldown = null;
+    }
+  }
+
+  function scheduleDeleteCooldownEnd() {
+    window.clearTimeout(STATE.deleteCooldownTimer);
+    const delayMs = Math.max(0, Number(STATE.deleteCooldown?.until) - Date.now());
+    STATE.deleteCooldownTimer = window.setTimeout(() => {
+      STATE.deleteCooldown = null;
+      void chrome.storage.local.remove(DELETE_COOLDOWN_KEY);
+      render();
+    }, Math.min(delayMs + 50, 2 ** 31 - 1));
   }
 
   function scheduleCapabilityHealthRefresh(delayMs = CAPABILITY_REFRESH_MS) {
