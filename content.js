@@ -42,6 +42,8 @@
   };
 
   const CACHE_KEY = "gptbd-conversation-cache-v1";
+  const SYNC_CHECKPOINT_KEY = "gptbd-sync-checkpoint-v1";
+  const SYNC_CHECKPOINT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
   const PROJECT_CACHE_KEY = "gptbd-project-cache-v1";
   const UI_HIDDEN_KEY = "gptbd-ui-hidden";
   const SKIP_DELETE_WARNING_KEY = "gptbd-skip-delete-warning";
@@ -1658,26 +1660,37 @@
     render();
 
     try {
-      const accessToken = await getAccessToken();
-      if (!accessToken) {
+      const session = await getSessionContext();
+      if (!session?.accessToken) {
         registerCapabilityFailure("sync", "Could not read your ChatGPT session.");
         showToast("Could not read your ChatGPT session. Refresh the page and try again.");
         return;
       }
-      const conversations = await fetchAllConversations(accessToken);
+      const checkpoint = await loadSyncCheckpoint(session.accountKey);
+      const conversations = await fetchAllConversations(session, checkpoint);
       registerCapabilitySuccess("sync");
       STATE.cachedConversations = conversations;
       STATE.cacheLoadedAt = Date.now();
-      persistCache();
+      if (!persistCache()) {
+        throw new Error("Sync finished, but the local cache is full. Clear the old cache and try again.");
+      }
+      await clearSyncCheckpoint();
       await ensureCapabilityHealth({ force: true, silent: true });
       render();
       showToast(`Synced ${conversations.length.toLocaleString()} chats to cache.`);
     } catch (error) {
       registerCapabilityFailure("sync", error instanceof Error ? error.message : "Sync failed.");
       await ensureCapabilityHealth({ force: true, silent: true });
-      const message = error instanceof Error && error.message
-        ? error.message
-        : "Sync failed. Refresh ChatGPT and try again.";
+      const partialCount = error instanceof GPTBDSync.SyncPausedError && error.checkpointSaved
+        ? error.checkpoint?.syncedCount || 0
+        : 0;
+      const message = partialCount > 0
+        ? `Sync paused after ${partialCount.toLocaleString()} chats. Click Sync again to retry safely.`
+        : error instanceof GPTBDSync.SyncPausedError && error.checkpoint?.syncedCount > 0
+          ? "Sync paused, but progress could not be saved. Click Sync to restart."
+        : error instanceof Error && error.message
+          ? error.message
+          : "Sync failed. Refresh ChatGPT and try again.";
       showToast(message);
     } finally {
       STATE.syncingAll = false;
@@ -1685,59 +1698,72 @@
     }
   }
 
-  async function fetchAllConversations(accessToken) {
-    const limit = 100;
-    let offset = 0;
-    const all = [];
-    const seen = new Set();
-    const projectMemberships = new Map();
-
-    while (true) {
-      const response = await fetch(`/backend-api/conversations?offset=${offset}&limit=${limit}`, {
-        credentials: "include",
-        headers: { Authorization: `Bearer ${accessToken}` }
-      });
-
-      if (!response.ok) throw new Error(`Conversation sync failed: ${response.status}`);
-
-      const data = await response.json();
-      if (!Array.isArray(data?.items)) {
-        throw new Error("Conversation sync failed: unexpected response shape.");
-      }
-      const items = data.items;
-
-      items.forEach(item => {
-        if (!item?.id || seen.has(item.id)) return;
-        seen.add(item.id);
-        const projectMeta = extractConversationProjectMeta(item);
-        if (projectMeta) {
-          const project = projectMemberships.get(projectMeta.key) || {
-            key: projectMeta.key,
-            name: projectMeta.name,
-            ids: []
-          };
-          project.ids.push(item.id);
-          projectMemberships.set(projectMeta.key, project);
+  async function fetchAllConversations(session, checkpoint) {
+    let checkpointSaved = false;
+    let records;
+    const options = {
+      accessToken: session.accessToken,
+      scopeKey: session.accountKey,
+      checkpoint,
+      fetchImpl: fetch,
+      delayImpl: delay,
+      onCheckpoint: async value => {
+        if (!session.accountKey) return;
+        try {
+          await persistSyncCheckpoint(value);
+          checkpointSaved = true;
+        } catch (_) {
+          checkpointSaved = false;
         }
-        all.push({
-          id: item.id,
-          title: normalizeText(item.title) || "Untitled chat",
-          updateTime: item.update_time || item.create_time || null
-        });
-      });
-
-      if (items.length < limit) break;
-      offset += items.length;
-      await delay(120);
+      },
+      mapItem: mapConversationForSync
+    };
+    try {
+      records = await GPTBDSync.fetchAllConversations(options);
+    } catch (error) {
+      if (error instanceof GPTBDSync.SyncPausedError && error.checkpoint) {
+        try {
+          if (!session.accountKey) throw new Error("Missing account identity");
+          await persistSyncCheckpoint(error.checkpoint);
+          checkpointSaved = true;
+        } catch (_) {
+          checkpointSaved = false;
+        }
+        error.checkpointSaved = checkpointSaved;
+      }
+      throw error;
     }
+
+    const projectMemberships = new Map();
+    records.forEach(item => {
+      const projectMeta = item.projectMeta;
+      if (!projectMeta) return;
+      const project = projectMemberships.get(projectMeta.key) || {
+        key: projectMeta.key,
+        name: projectMeta.name,
+        ids: []
+      };
+      project.ids.push(item.id);
+      projectMemberships.set(projectMeta.key, project);
+    });
 
     rememberSyncedProjectMemberships(projectMemberships);
 
-    return all.sort((a, b) => {
+    return records.map(({ projectMeta: _projectMeta, ...conversation }) => conversation).sort((a, b) => {
       const at = a.updateTime ? Date.parse(a.updateTime) : 0;
       const bt = b.updateTime ? Date.parse(b.updateTime) : 0;
       return bt - at;
     });
+  }
+
+  function mapConversationForSync(item) {
+    if (!item?.id) return null;
+    return {
+      id: item.id,
+      title: normalizeText(item.title) || "Untitled chat",
+      updateTime: item.update_time || item.create_time || null,
+      projectMeta: extractConversationProjectMeta(item)
+    };
   }
 
   function extractConversationProjectMeta(item) {
@@ -2018,11 +2044,32 @@
 
   /* ─────────────────────────── API HELPERS ──────────────────────────────── */
   async function getAccessToken() {
+    const session = await getSessionContext();
+    return session?.accessToken || null;
+  }
+
+  async function getSessionContext() {
     try {
       const response = await fetch("/api/auth/session", { credentials: "include" });
       if (!response.ok) return null;
       const data = await response.json();
-      return data?.accessToken || null;
+      const accessToken = data?.accessToken || null;
+      if (!accessToken) return null;
+      return {
+        accessToken,
+        accountKey: data?.user?.id || data?.account?.id || getJwtSubject(accessToken)
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function getJwtSubject(token) {
+    try {
+      const payload = token.split(".")[1];
+      if (!payload) return null;
+      const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+      return JSON.parse(window.atob(normalized))?.sub || null;
     } catch (_) {
       return null;
     }
@@ -2321,6 +2368,7 @@
     STATE.selectedYear = "all";
     STATE.selectedProjectKey = "all";
     persistCache();
+    void clearSyncCheckpoint();
   }
 
   function buildDeleteSummary(deleted, failedCount, sidebarRefreshed) {
@@ -2347,7 +2395,38 @@
         conversations: STATE.cachedConversations,
         loadedAt: STATE.cacheLoadedAt || Date.now()
       }));
-    } catch (_) {}
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function persistSyncCheckpoint(checkpoint) {
+    await chrome.storage.local.set({ [SYNC_CHECKPOINT_KEY]: checkpoint });
+  }
+
+  async function loadSyncCheckpoint(accountKey) {
+    try {
+      const stored = await chrome.storage.local.get(SYNC_CHECKPOINT_KEY);
+      const checkpoint = stored?.[SYNC_CHECKPOINT_KEY];
+      if (!checkpoint || !accountKey || checkpoint.scopeKey !== accountKey) {
+        await clearSyncCheckpoint();
+        return null;
+      }
+      const updatedAt = Number(checkpoint?.updatedAt) || 0;
+      if (!updatedAt || Date.now() - updatedAt > SYNC_CHECKPOINT_MAX_AGE_MS) {
+        await clearSyncCheckpoint();
+        return null;
+      }
+      return checkpoint;
+    } catch (_) {
+      try { await clearSyncCheckpoint(); } catch (_) {}
+      return null;
+    }
+  }
+
+  async function clearSyncCheckpoint() {
+    await chrome.storage.local.remove(SYNC_CHECKPOINT_KEY);
   }
 
   function persistProjectIndex() {
