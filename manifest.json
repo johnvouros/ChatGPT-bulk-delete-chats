@@ -35,6 +35,8 @@
       ],
       "js": [
         "sync-core.js",
+        "delete-core.js",
+        "ui-core.js",
         "content.js"
       ],
       "css": [

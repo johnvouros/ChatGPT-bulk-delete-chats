@@ -16,6 +16,9 @@ Sync reliability fix.
 - Save account-scoped partial progress and safely re-scan after an interrupted sync
 - Avoid stale offsets so conversation-list changes cannot skip or leak chats
 - Preserve the last complete cache when a sync pauses or cannot be persisted
+- Pace bulk delete requests, reuse one session token per batch, and stop safely on ChatGPT rate limits
+- Keep unprocessed rate-limited chats selected so the batch can be retried after the cooldown
+- Rename the selection toggle to describe its sidebar checkboxes and explain when the sidebar is closed
 
 ## [1.1.0] - 2026-04-28
 
