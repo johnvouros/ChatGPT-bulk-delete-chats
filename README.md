@@ -1,6 +1,6 @@
 # ChatGPT Bulk Delete
 
-![Version](https://img.shields.io/badge/version-1.1.0-3b82f6)
+![Version](https://img.shields.io/badge/version-1.1.1-3b82f6)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-10b981)
 ![ChatGPT](https://img.shields.io/badge/Works%20on-chatgpt.com-111827)
 ![Firefox](https://img.shields.io/badge/Firefox-Compatible-f97316)

@@ -1,0 +1,7 @@
+{
+  "name": "chatgpt-bulk-delete-chats",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

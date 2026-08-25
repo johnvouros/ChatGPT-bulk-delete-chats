@@ -8,6 +8,15 @@ This project follows a simple semantic versioning approach:
 - `MINOR`: new features that stay backward-compatible
 - `PATCH`: fixes, polish, and safe maintenance updates
 
+## [1.1.1] - 2026-08-25
+
+Sync reliability fix.
+
+- Retry transient conversation-page timeouts with bounded exponential backoff
+- Save account-scoped partial progress and safely re-scan after an interrupted sync
+- Avoid stale offsets so conversation-list changes cannot skip or leak chats
+- Preserve the last complete cache when a sync pauses or cannot be persisted
+
 ## [1.1.0] - 2026-04-28
 
 Feature update.
