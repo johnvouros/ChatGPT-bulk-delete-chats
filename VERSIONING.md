@@ -45,3 +45,14 @@ node scripts/bump-version.mjs minor
 node scripts/bump-version.mjs major
 node scripts/bump-version.mjs 1.0.1
 ```
+
+## Build store packages
+
+Run `python3 scripts/build-packages.py` after updating the manifest and README version.
+The build writes versioned Chrome/Firefox ZIPs in `dist/` and refreshes the existing
+submission filenames. Chrome excludes Firefox-specific manifest settings; Firefox
+retains its add-on ID and data-collection declaration. Only runtime files are packaged.
+
+Run `npm test` and both Library browser smoke scripts before publishing. Attach the
+versioned ZIPs to the matching GitHub release. Store submission and review are separate
+from a GitHub release; Firefox's submission ZIP is not a signed installable XPI.

@@ -8,6 +8,19 @@ This project follows a simple semantic versioning approach:
 - `MINOR`: new features that stay backward-compatible
 - `PATCH`: fixes, polish, and safe maintenance updates
 
+## [1.2.0] - 2026-09-30
+
+- Automatically sync when opening/restoring Library mode and show tiles progressively without persistent file or thumbnail caching
+
+- Add separate Library file sync, filename search, selection, and bulk deletion for issue #7
+- Keep Library metadata and previews in tab memory only; purge legacy Library caches
+- Add a responsive five-column thumbnail grid with filtered select-all and on-demand no-store previews
+- Use the current native Library DELETE endpoint and explicit JSON success response
+- Require explicit Library deletion confirmation and reuse paced batches and rate-limit cooldowns
+- Report Library compatibility separately and pause on unrecognized API responses
+- Add regression coverage for progressive sync, account switching, cache cleanup, and deletion safeguards
+- Maintainer verified Library syncing and deletion in live testing
+
 ## [1.1.1] - 2026-08-25
 
 Sync reliability fix.

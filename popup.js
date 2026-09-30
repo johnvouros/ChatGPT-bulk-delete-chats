@@ -228,6 +228,8 @@ function renderCompatibilityReport(report) {
   setCapability("sync", report.capabilities?.sync);
   setCapability("deleteApi", report.capabilities?.deleteApi);
   setCapability("deleteUi", report.capabilities?.deleteUi);
+  setCapability("librarySync", report.capabilities?.librarySync);
+  setCapability("libraryDelete", report.capabilities?.libraryDelete);
   setIssues(report.issues || []);
 }
 
@@ -239,6 +241,8 @@ function renderCompatibilityError(message) {
   setCapability("sync", null);
   setCapability("deleteApi", null);
   setCapability("deleteUi", null);
+  setCapability("librarySync", null);
+  setCapability("libraryDelete", null);
   setIssues([]);
 }
 
