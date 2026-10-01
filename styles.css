@@ -968,18 +968,19 @@
   appearance: none;
   -webkit-appearance: none;
   flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  width: 18px;
+  height: 18px;
+  border: 2px solid #a1a1aa;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.04);
+  background: #27272a;
+  box-shadow: 0 0 0 1px #18181b;
   cursor: pointer;
   position: relative;
   transition: background 120ms ease, border-color 120ms ease;
 }
 
 .gptbd-result-checkbox:hover {
-  border-color: rgba(255, 255, 255, 0.30);
+  border-color: #e4e4e7;
 }
 
 .gptbd-result-checkbox:checked {
@@ -1281,20 +1282,21 @@
 .gptbd-modal__check-input {
   appearance: none;
   -webkit-appearance: none;
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
   margin: 1px 0 0;
   flex: 0 0 auto;
-  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  border: 2px solid #a1a1aa;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.04);
+  background: #27272a;
+  box-shadow: 0 0 0 1px #18181b;
   position: relative;
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .gptbd-modal__check-input:hover {
-  border-color: rgba(255, 255, 255, 0.30);
+  border-color: #e4e4e7;
 }
 
 .gptbd-modal__check-input:checked {
@@ -1314,11 +1316,6 @@
   border-top: none;
   border-left: none;
   transform: rotate(43deg);
-}
-
-.gptbd-modal__check-input:focus-visible {
-  outline: 2px solid rgba(16, 163, 127, 0.60);
-  outline-offset: 2px;
 }
 
 .gptbd-modal__check-label {
@@ -1382,14 +1379,15 @@
   appearance: none;
   -webkit-appearance: none;
   margin: 0 8px 0 6px;
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   cursor: pointer;
   position: relative;
-  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  border: 2px solid #a1a1aa;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.04);
+  background: #27272a;
+  box-shadow: 0 0 0 1px #18181b;
   transition:
     background 120ms ease,
     border-color 120ms ease,
@@ -1398,8 +1396,8 @@
 }
 
 .gptbd-checkbox:hover {
-  border-color: rgba(255, 255, 255, 0.34);
-  background: rgba(255, 255, 255, 0.07);
+  border-color: #e4e4e7;
+  background: #3f3f46;
 }
 
 .gptbd-checkbox:checked {
@@ -1420,11 +1418,6 @@
   border-top: none;
   border-left: none;
   transform: rotate(43deg);
-}
-
-.gptbd-checkbox:focus-visible {
-  outline: 2px solid rgba(16, 163, 127, 0.60);
-  outline-offset: 2px;
 }
 
 .gptbd-row-enabled { cursor: pointer; }
@@ -1472,5 +1465,30 @@
   }
   .gptbd-submeta-right {
     justify-content: flex-start;
+  }
+}
+
+/* Keep selection visible on the dark toolbar, light sidebar, and thumbnails. */
+.gptbd-result-checkbox:focus-visible,
+.gptbd-modal__check-input:focus-visible,
+.gptbd-checkbox:focus-visible {
+  outline: 2px solid #facc15;
+  outline-offset: 2px;
+}
+
+/* Let the browser draw accessible controls in system high-contrast mode. */
+@media (forced-colors: active) {
+  .gptbd-result-checkbox,
+  .gptbd-modal__check-input,
+  .gptbd-checkbox {
+    appearance: auto;
+    -webkit-appearance: auto;
+    box-shadow: none;
+  }
+
+  .gptbd-result-checkbox:checked::after,
+  .gptbd-modal__check-input:checked::after,
+  .gptbd-checkbox:checked::after {
+    content: none;
   }
 }
