@@ -1,6 +1,7 @@
 (function () {
   /* ─────────────────────────────── STATE ────────────────────────────────── */
   const STATE = {
+    mode: "chats",
     enabled: false,
     selectedIds: new Set(),
     lastSelectedId: null,
@@ -23,6 +24,11 @@
     uiHidden: false,
     reviewSessionCount: 0,
     reviewPromptHidden: false,
+    library: GPTBDLibraryUi?.createState?.() || {
+      files: [], selectedIds: new Set(), searchTerm: "", syncing: false,
+      cacheLoadedAt: null, accountKey: null, syncApiAvailable: null, deleteApiAvailable: null,
+      visibleLimit: 50, lastError: "", isComplete: false, syncRunId: 0, deletePending: false
+    },
     health: {
       checkedAt: 0,
       running: false,
@@ -51,6 +57,7 @@
   const DEFAULT_DELETE_COOLDOWN_MS = 2 * 60 * 1000;
   const PROJECT_CACHE_KEY = "gptbd-project-cache-v1";
   const UI_HIDDEN_KEY = "gptbd-ui-hidden";
+  const TOOLBAR_MODE_KEY = "gptbd-toolbar-mode";
   const SKIP_DELETE_WARNING_KEY = "gptbd-skip-delete-warning";
   const REVIEW_SESSION_COUNT_KEY = "gptbd-review-session-count";
   const REVIEW_PROMPT_HIDDEN_KEY = "gptbd-review-prompt-hidden";
@@ -72,6 +79,17 @@
   const CAPABILITY_REFRESH_MS = 10 * 60 * 1000;
   const CAPABILITY_RETRY_MS = 90 * 1000;
   const CAPABILITY_FAILURE_THRESHOLD = 2;
+  const LIBRARY_THUMBNAIL_CONCURRENCY = 4;
+  const LIBRARY_THUMBNAIL_PATH = "/backend-api/estuary/content";
+  let libraryThumbnailObserver = null;
+  let libraryThumbnailActive = 0;
+  let libraryThumbnailGeneration = 0;
+  const libraryThumbnailQueue = [];
+  const libraryThumbnailUrls = new Map();
+  const libraryThumbnailLoading = new Map();
+  const libraryThumbnailControllers = new Map();
+  const libraryAutoSyncAttempts = new Set();
+  let lastLibrarySessionAccountKey;
 
   /* ───────────────────────────── SELECTORS ──────────────────────────────── */
   const SELECTORS = {
@@ -122,6 +140,8 @@
   /* modal resolve handle — set by showDeleteModal, cleared on resolution */
   let activeModalResolve = null;
   let runtimeBridgeReady = false;
+  let observedRoutePath = window.location.pathname;
+  let routeCheckQueued = false;
 
   /* ─────────────────────────────── BOOT ─────────────────────────────────── */
   function boot() {
@@ -129,18 +149,68 @@
     injectShell();
     refreshConversationRows();
     observeDom();
+    observeRouteChanges();
     observePreferenceChanges();
     setupRuntimeBridge();
     render();
+    if (STATE.mode === "library" && !STATE.uiHidden) void ensureLibraryCacheForCurrentAccount();
     window.addEventListener("focus", () => {
       void ensureCapabilityHealth({ force: isCapabilityHealthStale(), silent: true });
+      if (STATE.mode === "library" && !STATE.uiHidden) void ensureLibraryCacheForCurrentAccount();
     });
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
         void ensureCapabilityHealth({ force: isCapabilityHealthStale(), silent: true });
+        if (STATE.mode === "library" && !STATE.uiHidden) void ensureLibraryCacheForCurrentAccount();
       }
     });
+    window.addEventListener("pagehide", () => revokeLibraryThumbnails());
     void ensureCapabilityHealth({ force: true, silent: true });
+  }
+
+  function observeRouteChanges() {
+    if (observeRouteChanges.bound) return;
+    observeRouteChanges.bound = true;
+    const schedule = () => {
+      if (routeCheckQueued) return;
+      routeCheckQueued = true;
+      window.queueMicrotask(() => {
+        routeCheckQueued = false;
+        applyLibraryRouteMode();
+      });
+    };
+    window.addEventListener("popstate", schedule);
+    ["pushState", "replaceState"].forEach(method => {
+      const original = window.history?.[method];
+      if (typeof original !== "function") return;
+      window.history[method] = function (...args) {
+        const result = original.apply(this, args);
+        schedule();
+        return result;
+      };
+    });
+  }
+
+  function applyLibraryRouteMode() {
+    const path = window.location.pathname;
+    if (!isLibraryRoute()) {
+      observedRoutePath = path;
+      return;
+    }
+    // A user can deliberately keep Chats selected while remaining on the
+    // Library page; only an actual route transition changes the mode.
+    if (path === observedRoutePath) return;
+    // Retain a Library route transition until the active operation releases
+    // the toolbar; the DOM observer will then apply it.
+    if (STATE.deleting || STATE.syncingAll || STATE.library.syncing || STATE.library.deletePending) return;
+    observedRoutePath = path;
+    STATE.mode = "library";
+    STATE.enabled = false;
+    STATE.selectedIds.clear();
+    STATE.lastSelectedId = null;
+    refreshConversationRows();
+    render();
+    if (!STATE.uiHidden) void ensureLibraryCacheForCurrentAccount();
   }
 
   /* ───────────────────────────── SHELL HTML ─────────────────────────────── */
@@ -151,9 +221,20 @@
     root.id = "gpt-bulk-delete-root";
     const shell = `
       <div class="gptbd-toolbar">
+        <div class="gptbd-mode-tabs" role="tablist" aria-label="Bulk delete mode">
+          <button type="button" class="gptbd-mode-tab" data-action="set-mode" data-mode="chats"
+                  role="tab" aria-selected="true">Chats</button>
+          <button type="button" class="gptbd-mode-tab" data-action="set-mode" data-mode="library"
+                  role="tab" aria-selected="false">Library</button>
+        </div>
+
+        <div class="gptbd-delete-notice" data-role="delete-pacing-notice" role="status" hidden>
+          <strong class="gptbd-delete-notice__title">Why is deletion slow?</strong>
+          <span>ChatGPT limits how quickly files and chats can be deleted. We add short pauses to reduce interruptions. Large selections may take a few minutes.</span>
+        </div>
 
         <!-- ── Main horizontal bar ── -->
-        <div class="gptbd-bar">
+        <div class="gptbd-bar" data-role="chats-bar">
 
           <!-- Identity + mode toggle -->
           <div class="gptbd-section gptbd-section--id">
@@ -233,7 +314,7 @@
           </div>
         </div><!-- /.gptbd-bar -->
 
-        <div class="gptbd-submeta">
+        <div class="gptbd-submeta" data-role="chats-submeta">
           <div class="gptbd-submeta-left">
             <span class="gptbd-meta-text">local-only</span>
             <span class="gptbd-meta-dot">·</span>
@@ -274,14 +355,14 @@
         </div>
 
         <!-- Progress strip (delete / sync) -->
-        <div class="gptbd-progress" data-visible="false" aria-hidden="true">
+        <div class="gptbd-progress" data-role="chats-progress" data-visible="false" aria-hidden="true">
           <div class="gptbd-progress__track">
             <div class="gptbd-progress__bar" data-role="progress-bar"></div>
           </div>
           <span class="gptbd-progress__label" data-role="progress-label"></span>
         </div>
 
-        <div class="gptbd-results-actions" data-visible="false">
+        <div class="gptbd-results-actions" data-role="chats-results-actions" data-visible="false">
           <div class="gptbd-results-actions__left" data-role="year-filters"></div>
           <div class="gptbd-results-actions__right">
             <button type="button" class="gptbd-results-action" data-action="toggle-results">
@@ -297,7 +378,48 @@
         </div>
 
         <!-- Search-results panel (cached conversations) -->
-        <div class="gptbd-results" data-visible="false"></div>
+        <div class="gptbd-results" data-role="chats-results" data-visible="false"></div>
+
+        <section class="gptbd-library" data-role="library-panel" hidden aria-label="ChatGPT Library files">
+          <div class="gptbd-library__bar">
+            <div class="gptbd-search-wrap gptbd-library__search-wrap">
+              <svg class="gptbd-search-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="6.5" cy="6.5" r="4" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M10 10L13.5 13.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              <input type="text" class="gptbd-search" data-role="library-search" placeholder="Filter library files…" spellcheck="false" autocomplete="off" />
+            </div>
+            <button type="button" class="gptbd-btn gptbd-btn--chip" data-action="library-sync" data-testid="library-sync">
+              <span data-role="library-sync-label">Sync Library</span>
+            </button>
+            <button type="button" class="gptbd-results-action" data-action="library-select-all" data-testid="library-select-all">Select all</button>
+            <button type="button" class="gptbd-results-action" data-action="library-clear-selection">Clear</button>
+            <button type="button" class="gptbd-results-action" data-action="library-clear-cache">Clear session</button>
+        <button type="button" class="gptbd-btn gptbd-btn--delete" data-action="library-delete" data-testid="library-delete" disabled>
+              <span data-role="library-delete-label">Remove files</span>
+            </button>
+          </div>
+          <div class="gptbd-library__meta">
+            <span class="gptbd-meta-text">Session only · thumbnails not saved by extension</span>
+            <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+            <span class="gptbd-meta-text">All Library files · use this panel’s filter to narrow selection</span>
+            <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+            <span data-role="library-count">0 files</span>
+            <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+            <span data-role="library-selection-count">0 selected</span>
+            <span class="gptbd-meta-dot" data-role="library-sync-dot" aria-hidden="true" hidden>·</span>
+            <span data-role="library-last-sync" hidden></span>
+            <span class="gptbd-meta-text gptbd-meta-text--warning" data-role="library-status" hidden></span>
+          </div>
+          <div class="gptbd-progress" data-role="library-progress" data-visible="false" aria-hidden="true">
+            <div class="gptbd-progress__track"><div class="gptbd-progress__bar" data-role="library-progress-bar"></div></div>
+            <span class="gptbd-progress__label" data-role="library-progress-label"></span>
+          </div>
+          <div class="gptbd-results gptbd-library__results" data-role="library-results" data-visible="true" data-testid="library-results"></div>
+          <div class="gptbd-library__footer" data-role="library-footer" hidden>
+            <button type="button" class="gptbd-results-action" data-action="library-show-more">Show more</button>
+          </div>
+        </section>
 
       </div><!-- /.gptbd-toolbar -->
 
@@ -362,7 +484,71 @@
       if (!el) return;
       const action = el.dataset.action;
 
+      if (action === "set-mode") {
+        const nextMode = el.dataset.mode === "library" ? "library" : "chats";
+        if (STATE.deleting || STATE.library.deletePending) {
+          showToast("Finish or cancel the current deletion before switching tabs.");
+          return;
+        }
+        if (STATE.syncingAll || STATE.library.syncing) {
+          showToast("Still loading your list. You can switch tabs when loading finishes.");
+          return;
+        }
+        // A deliberate tab choice takes precedence over a deferred route update.
+        observedRoutePath = window.location.pathname;
+        STATE.mode = nextMode;
+        void setToolbarModePreference(nextMode);
+        if (nextMode === "library") {
+          STATE.enabled = false;
+          STATE.selectedIds.clear();
+          STATE.lastSelectedId = null;
+          refreshConversationRows();
+          void ensureLibraryCacheForCurrentAccount();
+        }
+        render();
+        return;
+      }
+
+      if (action === "library-sync") {
+        await syncLibraryFiles();
+        return;
+      }
+
+      if (action === "library-select-all") {
+        getFilteredLibraryFiles().forEach(file => STATE.library.selectedIds.add(file.id));
+        render();
+        return;
+      }
+
+      if (action === "library-clear-selection") {
+        STATE.library.selectedIds.clear();
+        render();
+        return;
+      }
+
+      if (action === "library-clear-cache") {
+        if (STATE.library.syncing || STATE.deleting) return;
+        revokeLibraryThumbnails();
+        GPTBDLibraryUi?.clearCache?.(STATE.library, window.localStorage);
+        render();
+        showToast("Library files and thumbnails were cleared from this browser session.");
+        return;
+      }
+
+      if (action === "library-show-more") {
+        if (STATE.library.syncing || STATE.deleting) return;
+        STATE.library.visibleLimit += 50;
+        render();
+        return;
+      }
+
+      if (action === "library-delete") {
+        await deleteSelectedLibraryFiles();
+        return;
+      }
+
       if (action === "toggle") {
+        if (STATE.library.deletePending) return;
         const wasEnabled = STATE.enabled;
         STATE.enabled = !STATE.enabled;
         if (!STATE.enabled) {
@@ -496,9 +682,16 @@
     /* ── Search input ── */
     const searchInput = root.querySelector('[data-role="search"]');
     searchInput.addEventListener("input", (event) => {
+      if (STATE.mode !== "chats") return;
       STATE.searchTerm = normalizeSearchTerm(event.target.value);
       if (STATE.searchTerm) STATE.resultsCollapsed = false;
       refreshConversationRows();
+      render();
+    });
+
+    const librarySearchInput = root.querySelector('[data-role="library-search"]');
+    librarySearchInput?.addEventListener("input", event => {
+      STATE.library.searchTerm = normalizeSearchTerm(event.target.value);
       render();
     });
 
@@ -555,6 +748,7 @@
     STATE.observer = new MutationObserver(() => {
       window.clearTimeout(STATE.refreshTimer);
       STATE.refreshTimer = window.setTimeout(() => {
+        applyLibraryRouteMode();
         refreshConversationRows();
         void ensureCapabilityHealth({ force: false, silent: true });
         render();
@@ -572,13 +766,30 @@
     toolbar.hidden = STATE.uiHidden;
     if (STATE.uiHidden) return;
 
+    const deletionNotice = toolbar.querySelector('[data-role="delete-pacing-notice"]');
+    if (deletionNotice) deletionNotice.hidden = !STATE.deleting;
+    const libraryActive = STATE.mode === "library";
+    toolbar.querySelectorAll("[data-role='chats-bar'], [data-role='chats-submeta'], [data-role='chats-progress'], [data-role='chats-results-actions'], [data-role='chats-results']")
+      .forEach(element => { element.hidden = libraryActive; });
+    toolbar.querySelectorAll("[data-action='set-mode']").forEach(tab => {
+      const active = tab.dataset.mode === STATE.mode;
+      tab.dataset.active = String(active);
+      tab.setAttribute("aria-selected", String(active));
+    });
+    const libraryPanel = toolbar.querySelector('[data-role="library-panel"]');
+    if (libraryPanel) libraryPanel.hidden = !libraryActive;
+    if (libraryActive) {
+      renderLibraryPanel(toolbar);
+      return;
+    }
+
     const pageContext = getPageContext();
     const activeScope = getEffectiveResultScope(pageContext);
     const projectMode = activeScope === "project";
     const selectedCount = STATE.selectedIds.size;
     const matchCount = getSearchResults().length;
     const hasCache = STATE.cachedConversations.length > 0;
-    const busy = STATE.deleting || STATE.syncingAll;
+    const busy = STATE.deleting || STATE.syncingAll || STATE.library.deletePending;
     const health = STATE.health;
     const deleteCoolingDown = isDeleteCoolingDown();
     const hasVisibleSidebar = hasVisibleSidebarConversationRow();
@@ -818,6 +1029,598 @@
     }
 
     renderResultsPanel(toolbar.querySelector(".gptbd-results"));
+  }
+
+  /* ───────────────────────────── LIBRARY MODE ──────────────────────────── */
+  async function ensureLibraryCacheForCurrentAccount() {
+    const session = await getSessionContext();
+    if (session?.accountKey && STATE.library.accountKey !== session.accountKey) {
+      revokeLibraryThumbnails();
+      GPTBDLibraryUi?.loadCache?.(STATE.library, window.localStorage, session.accountKey);
+    }
+    if (session?.accountKey && STATE.mode === "library" && !STATE.uiHidden) {
+      void maybeAutoSyncLibrary(session);
+    }
+    render();
+  }
+
+  async function maybeAutoSyncLibrary(session) {
+    if (!session?.accountKey || STATE.library.syncing || STATE.deleting) return;
+    if (libraryAutoSyncAttempts.has(session.accountKey)) return;
+    libraryAutoSyncAttempts.add(session.accountKey);
+    await syncLibraryFiles({ automatic: true, sessionHint: session });
+  }
+
+  function getFilteredLibraryFiles() {
+    const filter = GPTBDLibraryUi?.filterFiles;
+    return filter
+      ? filter(STATE.library.files, STATE.library.searchTerm)
+      : STATE.library.files.filter(file => !STATE.library.searchTerm || String(file.title || file.fileName || "").toLowerCase().includes(STATE.library.searchTerm));
+  }
+
+  function renderLibraryPanel(toolbar) {
+    const library = STATE.library;
+    const busy = Boolean(library.syncing || STATE.deleting || library.deletePending);
+    const files = getFilteredLibraryFiles();
+    const syncButton = toolbar.querySelector('[data-action="library-sync"]');
+    const syncLabel = toolbar.querySelector('[data-role="library-sync-label"]');
+    const search = toolbar.querySelector('[data-role="library-search"]');
+    const selectAll = toolbar.querySelector('[data-action="library-select-all"]');
+    const clear = toolbar.querySelector('[data-action="library-clear-selection"]');
+    const clearSession = toolbar.querySelector('[data-action="library-clear-cache"]');
+    const remove = toolbar.querySelector('[data-action="library-delete"]');
+    const removeLabel = toolbar.querySelector('[data-role="library-delete-label"]');
+    const results = toolbar.querySelector('[data-role="library-results"]');
+    const count = toolbar.querySelector('[data-role="library-count"]');
+    const selected = toolbar.querySelector('[data-role="library-selection-count"]');
+    const syncDot = toolbar.querySelector('[data-role="library-sync-dot"]');
+    const lastSync = toolbar.querySelector('[data-role="library-last-sync"]');
+    const status = toolbar.querySelector('[data-role="library-status"]');
+    const progress = toolbar.querySelector('[data-role="library-progress"]');
+    const progressBar = toolbar.querySelector('[data-role="library-progress-bar"]');
+    const progressLabel = toolbar.querySelector('[data-role="library-progress-label"]');
+    const footer = toolbar.querySelector('[data-role="library-footer"]');
+    const showMore = toolbar.querySelector('[data-action="library-show-more"]');
+    const hasCore = Boolean(globalThis.GPTBDLibrary?.fetchLibraryFiles && globalThis.GPTBDLibrary?.deleteLibraryFile);
+    const coolingDown = isDeleteCoolingDown(library.accountKey || STATE.accountKey);
+
+    if (syncLabel) syncLabel.textContent = library.syncing ? "Syncing…" : (library.files.length || library.lastError) ? "Resync Library" : "Sync Library";
+    if (syncButton) {
+      syncButton.disabled = busy || !hasCore;
+      syncButton.title = hasCore ? "Download your ChatGPT Library file list" : "Library module is unavailable. Reload the extension, then refresh ChatGPT.";
+    }
+    if (search) search.disabled = STATE.deleting;
+    if (count) count.textContent = `${library.files.length.toLocaleString()} file${library.files.length === 1 ? "" : "s"}`;
+    if (selected) selected.textContent = `${library.selectedIds.size} selected`;
+    if (syncDot) syncDot.hidden = !library.cacheLoadedAt;
+    if (lastSync) {
+      lastSync.textContent = library.cacheLoadedAt ? `synced ${formatLastSync(library.cacheLoadedAt)}` : "";
+      lastSync.hidden = !library.cacheLoadedAt;
+    }
+    if (status) {
+      const message = coolingDown
+        ? formatDeleteCooldownMessage()
+        : library.lastError
+          ? `${library.lastError} Use Resync Library to retry.`
+        : !hasCore
+        ? "Library module is unavailable. Reload the extension, then refresh ChatGPT."
+        : library.deleteApiAvailable === false
+          ? "Library delete API unavailable. No files can be deleted."
+          : library.deleteApiAvailable === null
+            ? "Library deletion has not been tested in this session yet."
+            : "";
+      status.textContent = message;
+      status.hidden = !message;
+    }
+    if (selectAll) {
+      selectAll.disabled = busy || files.length === 0;
+      selectAll.textContent = files.length ? `Select all ${files.length.toLocaleString()}` : "Select all";
+      selectAll.title = files.length ? `Select all ${files.length.toLocaleString()} filtered files, including files not shown yet` : "No filtered files to select";
+    }
+    if (clear) clear.disabled = busy || library.selectedIds.size === 0;
+    if (clearSession) clearSession.disabled = busy || library.files.length === 0;
+    if (remove) {
+      remove.disabled = busy || !library.isComplete || coolingDown || library.selectedIds.size === 0 || !hasCore || library.deleteApiAvailable === false;
+      remove.title = coolingDown
+        ? formatDeleteCooldownMessage()
+        : "Remove selected Library files after confirmation";
+    }
+    if (removeLabel) {
+      removeLabel.textContent = STATE.deleting
+        ? `Removing ${STATE.deleteProgress.current}/${STATE.deleteProgress.total}`
+        : library.selectedIds.size ? `Remove ${library.selectedIds.size} files` : "Remove files";
+    }
+    if (progress && progressBar) {
+      if (library.syncing) {
+        progress.dataset.visible = "true";
+        progress.dataset.indeterminate = "true";
+        progressBar.style.width = "0%";
+        if (progressLabel) {
+          const fetched = Number(library.syncProgress) || 0;
+          progressLabel.textContent = fetched ? `Fetched ${fetched.toLocaleString()} Library files…` : "Fetching Library files…";
+        }
+      } else if (STATE.deleting) {
+        progress.dataset.visible = "true";
+        progress.dataset.indeterminate = "false";
+        const pct = STATE.deleteProgress.total ? (STATE.deleteProgress.current / STATE.deleteProgress.total) * 100 : 0;
+        progressBar.style.width = `${pct}%`;
+        if (progressLabel) progressLabel.textContent = `${STATE.deleteProgress.current} of ${STATE.deleteProgress.total} processed`;
+      } else {
+        progress.dataset.visible = "false";
+        progress.dataset.indeterminate = "false";
+        progressBar.style.width = "0%";
+      }
+    }
+    const remaining = Math.max(0, files.length - library.visibleLimit);
+    if (footer) footer.hidden = remaining === 0;
+    if (showMore) {
+      showMore.disabled = STATE.deleting;
+      showMore.textContent = `Show 50 more (${remaining.toLocaleString()} remaining)`;
+    }
+    renderLibraryResults(results, files);
+  }
+
+  function renderLibraryResults(panel, files) {
+    if (!panel) return;
+    if (STATE.library.syncing && STATE.library.files.length === 0) {
+      delete panel.dataset.libraryRenderKey;
+      replaceChildren(panel, [buildEmptyState("Fetching Library files…", "notice")]);
+      return;
+    }
+    if (!STATE.library.accountKey) {
+      delete panel.dataset.libraryRenderKey;
+      replaceChildren(panel, [buildEmptyState("Open ChatGPT while signed in, then sync your Library.", "notice")]);
+      return;
+    }
+    if (STATE.library.files.length === 0) {
+      delete panel.dataset.libraryRenderKey;
+      replaceChildren(panel, [buildEmptyState("No Library files are loaded for this browser session. Click Sync Library to load them.", "notice")]);
+      return;
+    }
+    if (files.length === 0) {
+      delete panel.dataset.libraryRenderKey;
+      replaceChildren(panel, [buildEmptyState("No Library files match this filter.")]);
+      return;
+    }
+    const visibleFiles = files.slice(0, STATE.library.visibleLimit);
+    const renderKey = `${STATE.library.renderRevision || 0}:${visibleFiles.map(file => file.id).join("|")}`;
+    if (panel.dataset.libraryRenderKey !== renderKey) {
+      const grid = document.createElement("div");
+      grid.className = "gptbd-library-grid";
+      grid.dataset.role = "library-grid";
+      visibleFiles.forEach(file => grid.appendChild(buildLibraryTile(file)));
+      replaceChildren(panel, [grid]);
+      panel.dataset.libraryRenderKey = renderKey;
+      observeLibraryThumbnails(grid);
+    }
+    panel.querySelectorAll("[data-library-id]").forEach(checkbox => {
+      const id = checkbox.dataset.libraryId;
+      checkbox.checked = STATE.library.selectedIds.has(id);
+      checkbox.disabled = STATE.library.syncing || STATE.deleting;
+    });
+  }
+
+  function buildLibraryTile(file) {
+    const tile = document.createElement("label");
+    tile.className = "gptbd-library-tile";
+    tile.dataset.libraryId = file.id;
+    const preview = document.createElement("span");
+    preview.className = "gptbd-library-tile__preview";
+    const image = document.createElement("img");
+    image.className = "gptbd-library-tile__image";
+    image.alt = "";
+    image.decoding = "async";
+    image.dataset.libraryThumbnailId = file.id;
+    if (libraryThumbnailUrls.has(file.id)) image.src = libraryThumbnailUrls.get(file.id);
+    const fallback = document.createElement("span");
+    fallback.className = "gptbd-library-tile__fallback";
+    fallback.textContent = getLibraryFileKind(file);
+    preview.append(image, fallback);
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "gptbd-result-checkbox gptbd-library-tile__checkbox";
+    checkbox.dataset.libraryId = file.id;
+    checkbox.checked = STATE.library.selectedIds.has(file.id);
+    checkbox.disabled = STATE.library.syncing || STATE.deleting;
+    checkbox.addEventListener("change", event => {
+      if (event.target.checked) STATE.library.selectedIds.add(file.id);
+      else STATE.library.selectedIds.delete(file.id);
+      render();
+    });
+    const title = document.createElement("span");
+    title.className = "gptbd-library-tile__title";
+    title.textContent = file.title || file.fileName || "Unnamed file";
+    title.title = title.textContent;
+    const meta = document.createElement("span");
+    meta.className = "gptbd-library-tile__meta";
+    meta.textContent = formatConversationDate(file.createdAt);
+    tile.append(preview, checkbox, title, meta);
+    return tile;
+  }
+
+  function getLibraryFileKind(file) {
+    const mime = String(file.mimeType || "").toLowerCase();
+    if (mime.startsWith("image/")) return "Image";
+    if (mime.includes("pdf")) return "PDF";
+    const extension = String(file.fileName || file.title || "").split(".").pop();
+    return extension && extension !== file.fileName ? extension.toUpperCase().slice(0, 8) : "File";
+  }
+
+  function observeLibraryThumbnails(grid) {
+    if (libraryThumbnailObserver) libraryThumbnailObserver.disconnect();
+    const images = Array.from(grid.querySelectorAll("[data-library-thumbnail-id]"));
+    if (typeof IntersectionObserver !== "function") {
+      images.slice(0, 12).forEach(image => queueLibraryThumbnail(image));
+      return;
+    }
+    libraryThumbnailObserver = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        libraryThumbnailObserver?.unobserve(entry.target);
+        queueLibraryThumbnail(entry.target);
+      });
+    }, { root: null, rootMargin: "240px 0px" });
+    images.forEach(image => libraryThumbnailObserver.observe(image));
+  }
+
+  function queueLibraryThumbnail(image) {
+    const id = image?.dataset?.libraryThumbnailId;
+    if (!id || libraryThumbnailUrls.has(id) || libraryThumbnailLoading.has(id)) return;
+    const file = STATE.library.files.find(item => item.id === id);
+    if (!file || !getLibraryThumbnailUrl(file)) return;
+    const generation = libraryThumbnailGeneration;
+    libraryThumbnailLoading.set(id, generation);
+    libraryThumbnailQueue.push({ id, image, file, generation });
+    drainLibraryThumbnailQueue();
+  }
+
+  function drainLibraryThumbnailQueue() {
+    while (libraryThumbnailActive < LIBRARY_THUMBNAIL_CONCURRENCY && libraryThumbnailQueue.length) {
+      const item = libraryThumbnailQueue.shift();
+      if (!item?.image?.isConnected || item.generation !== libraryThumbnailGeneration || STATE.library.files.every(file => file.id !== item.id)) {
+        if (libraryThumbnailLoading.get(item?.id) === item?.generation) libraryThumbnailLoading.delete(item?.id);
+        continue;
+      }
+      libraryThumbnailActive += 1;
+      void fetchLibraryThumbnail(item).finally(() => {
+        libraryThumbnailActive -= 1;
+        if (libraryThumbnailLoading.get(item.id) === item.generation) libraryThumbnailLoading.delete(item.id);
+        if (item.generation !== libraryThumbnailGeneration) {
+          const replacement = document.querySelector(`[data-library-thumbnail-id="${CSS.escape(item.id)}"]`);
+          if (replacement) queueLibraryThumbnail(replacement);
+        }
+        drainLibraryThumbnailQueue();
+      });
+    }
+  }
+
+  async function fetchLibraryThumbnail({ id, image, file, generation }) {
+    const url = getLibraryThumbnailUrl(file);
+    if (!url) return;
+    const controller = new AbortController();
+    libraryThumbnailControllers.set(id, { controller, generation });
+    const timeoutId = window.setTimeout(() => controller.abort(), 15 * 1000);
+    try {
+      const response = await fetch(url, {
+        credentials: "include",
+        cache: "no-store",
+        redirect: "follow",
+        mode: "same-origin",
+        referrerPolicy: "no-referrer",
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error("thumbnail unavailable");
+      const contentLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > 5 * 1024 * 1024) throw new Error("thumbnail too large");
+      const blob = await response.blob();
+      if (blob.size > 5 * 1024 * 1024) throw new Error("thumbnail too large");
+      if (!blob.type.startsWith("image/")) throw new Error("thumbnail was not an image");
+      if (controller.signal.aborted || generation !== libraryThumbnailGeneration || STATE.library.files.every(current => current.id !== id)) return;
+      const objectUrl = URL.createObjectURL(blob);
+      libraryThumbnailUrls.set(id, objectUrl);
+      document.querySelectorAll(`[data-library-thumbnail-id="${CSS.escape(id)}"]`).forEach(element => {
+        if (element instanceof HTMLImageElement) element.src = objectUrl;
+      });
+    } catch (_) {
+      image.closest(".gptbd-library-tile")?.setAttribute("data-thumbnail-failed", "true");
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (libraryThumbnailControllers.get(id)?.controller === controller) libraryThumbnailControllers.delete(id);
+    }
+  }
+
+  function getLibraryThumbnailUrl(file) {
+    if (typeof file?.thumbnailUrl !== "string" || !file.thumbnailUrl) return null;
+    try {
+      const url = new URL(file.thumbnailUrl, window.location.origin);
+      const isThumbnailPath = url.pathname === LIBRARY_THUMBNAIL_PATH
+        || /^\/library\/files\/[A-Za-z0-9_-]+\/thumbnail$/.test(url.pathname);
+      return url.origin === window.location.origin && !url.username && !url.password && isThumbnailPath ? url.href : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function revokeLibraryThumbnails(ids = null) {
+    const wanted = ids ? new Set(ids) : null;
+    if (!wanted) {
+      if (libraryThumbnailObserver) libraryThumbnailObserver.disconnect();
+      libraryThumbnailGeneration += 1;
+      STATE.library.renderRevision = (STATE.library.renderRevision || 0) + 1;
+      document.querySelectorAll("[data-library-thumbnail-id]").forEach(image => image.removeAttribute("src"));
+    }
+    Array.from(libraryThumbnailControllers.entries()).forEach(([id, entry]) => {
+      if (!wanted || wanted.has(id)) entry.controller.abort();
+    });
+    for (let index = libraryThumbnailQueue.length - 1; index >= 0; index -= 1) {
+      if (!wanted || wanted.has(libraryThumbnailQueue[index].id)) {
+        const item = libraryThumbnailQueue[index];
+        if (libraryThumbnailLoading.get(item.id) === item.generation) libraryThumbnailLoading.delete(item.id);
+        libraryThumbnailQueue.splice(index, 1);
+      }
+    }
+    Array.from(libraryThumbnailUrls.entries()).forEach(([id, objectUrl]) => {
+      if (!wanted || wanted.has(id)) {
+        URL.revokeObjectURL(objectUrl);
+        libraryThumbnailUrls.delete(id);
+      }
+    });
+  }
+
+  async function syncLibraryFiles(options = {}) {
+    if (STATE.library.syncing || STATE.library.deletePending || STATE.deleting) return;
+    const automatic = Boolean(options.automatic);
+    const library = STATE.library;
+    let runId = (library.syncRunId || 0) + 1;
+    const initialAccountKey = library.accountKey;
+    library.syncRunId = runId;
+    library.syncing = true;
+    library.syncProgress = 0;
+    render();
+
+    const snapshot = library.isComplete && library.accountKey
+      ? {
+        accountKey: library.accountKey,
+        files: library.files.slice(),
+        selectedIds: new Set(library.selectedIds),
+        cacheLoadedAt: library.cacheLoadedAt,
+        deleteApiAvailable: library.deleteApiAvailable,
+        syncApiAvailable: library.syncApiAvailable,
+        visibleLimit: library.visibleLimit
+      }
+      : null;
+    if (!globalThis.GPTBDLibrary?.fetchLibraryFiles) {
+      library.lastError = "Library module is unavailable. Reload the extension, then refresh ChatGPT.";
+      library.syncing = false;
+      render();
+      if (!automatic) showToast(`${library.lastError} Use Resync Library to retry.`);
+      return;
+    }
+    let syncSucceeded = false;
+    let progressiveStarted = false;
+    let session = options.sessionHint || null;
+    try {
+      if (!session) session = await getSessionContext();
+      if (!session?.accessToken || !session.accountKey) {
+        throw new Error("Could not read your ChatGPT session. Refresh the page and try again.");
+      }
+      if (library.syncRunId !== runId) {
+        if (!initialAccountKey && library.accountKey === session.accountKey) {
+          runId = library.syncRunId;
+          library.syncing = true;
+        } else {
+          throw new Error("Your ChatGPT account changed while Library files were syncing.");
+        }
+      }
+      if (library.accountKey !== session.accountKey) {
+        revokeLibraryThumbnails();
+        GPTBDLibraryUi?.loadCache?.(library, window.localStorage, session.accountKey);
+        if (library.syncRunId !== runId) throw new Error("Your ChatGPT account changed while Library files were syncing.");
+        library.syncing = true;
+      }
+      const files = await GPTBDLibrary.fetchLibraryFiles({
+        accessToken: session.accessToken,
+        fetchImpl: fetch,
+        deleteApi: GPTBDDelete,
+        delayImpl: delay,
+        onCheckpoint: checkpoint => {
+          if (library.syncRunId !== runId) return;
+          library.syncProgress = Number(checkpoint?.syncedCount) || 0;
+          render();
+        },
+        onPage: async page => {
+          const freshSession = await getSessionContext();
+          if (!freshSession?.accessToken || freshSession.accountKey !== session.accountKey || library.syncRunId !== runId) {
+            throw new Error("Your ChatGPT account changed while Library files were syncing. The result was discarded.");
+          }
+          session.accessToken = freshSession.accessToken;
+          if (!progressiveStarted) {
+            progressiveStarted = true;
+            revokeLibraryThumbnails();
+            library.files = [];
+            library.visibleLimit = 50;
+          }
+          const additions = GPTBDLibraryUi?.normalizeFiles?.(page?.files) || [];
+          const known = new Set(library.files.map(file => file.id));
+          additions.forEach(file => { if (!known.has(file.id)) library.files.push(file); });
+          library.selectedIds.clear();
+          library.visibleLimit = Math.max(50, library.visibleLimit);
+          library.isComplete = false;
+          library.syncProgress = Number(page?.syncedCount) || library.files.length;
+          render();
+        }
+      });
+      syncSucceeded = true;
+      const freshSession = await getSessionContext();
+      if (!freshSession?.accessToken || freshSession.accountKey !== session.accountKey || library.syncRunId !== runId) {
+        throw new Error("Your ChatGPT account changed while Library files were syncing. The result was discarded.");
+      }
+      session.accessToken = freshSession.accessToken;
+      revokeLibraryThumbnails();
+      library.files = GPTBDLibraryUi?.normalizeFiles?.(files) || files;
+      library.selectedIds.clear();
+      library.visibleLimit = 50;
+      library.cacheLoadedAt = Date.now();
+      library.accountKey = session.accountKey;
+      library.syncApiAvailable = true;
+      library.deleteApiAvailable = null;
+      library.isComplete = true;
+      library.lastError = "";
+      GPTBDLibraryUi?.persistCache?.(library, window.localStorage);
+      showToast(`Loaded ${library.files.length.toLocaleString()} Library files for this browser session.`);
+    } catch (error) {
+      if (library.syncRunId !== runId) return;
+      if (snapshot && snapshot.accountKey === library.accountKey) {
+        revokeLibraryThumbnails();
+        library.files = snapshot.files;
+        library.selectedIds = snapshot.selectedIds;
+        library.cacheLoadedAt = snapshot.cacheLoadedAt;
+        library.deleteApiAvailable = snapshot.deleteApiAvailable;
+        library.syncApiAvailable = snapshot.syncApiAvailable;
+        library.visibleLimit = snapshot.visibleLimit;
+        library.isComplete = true;
+      } else {
+        revokeLibraryThumbnails();
+        library.files = [];
+        library.selectedIds.clear();
+        library.cacheLoadedAt = null;
+        library.isComplete = false;
+        if (!syncSucceeded) library.syncApiAvailable = false;
+      }
+      library.lastError = error instanceof Error && error.message ? error.message : "Library sync failed.";
+      if (!automatic) showToast(`${library.lastError} Use Resync Library to retry.`);
+    } finally {
+      if (library.syncRunId === runId) {
+        library.syncing = false;
+        library.syncProgress = 0;
+        render();
+      }
+    }
+  }
+
+  async function deleteSelectedLibraryFiles() {
+    const library = STATE.library;
+    const ids = Array.from(library.selectedIds);
+    if (!ids.length || STATE.deleting || library.deletePending || library.syncing || !library.isComplete || library.deleteApiAvailable === false) return;
+    library.deletePending = true;
+    render();
+    const session = await getSessionContext();
+    if (!session?.accessToken || !session.accountKey || library.accountKey !== session.accountKey || library.syncing || !library.isComplete) {
+      showToast("Your ChatGPT account changed. Sync Library again before deleting files.");
+      library.deletePending = false;
+      render();
+      return;
+    }
+    await restoreDeleteCooldown(session.accountKey);
+    if (isDeleteCoolingDown(session.accountKey)) {
+      showToast(formatDeleteCooldownMessage());
+      scheduleDeleteCooldownEnd();
+      render();
+      library.deletePending = false;
+      render();
+      return;
+    }
+    const files = ids.map(id => library.files.find(file => file.id === id)).filter(Boolean);
+    if (files.length !== ids.length) {
+      showToast("Some selected Library files are no longer in this session list. Sync Library and try again.");
+      library.deletePending = false;
+      render();
+      return;
+    }
+    const confirmed = await showDeleteModal(ids, files.map(file => file.title || file.fileName || "Unnamed file"), { mode: "library" });
+    if (!confirmed) {
+      library.deletePending = false;
+      render();
+      return;
+    }
+
+    const refreshedSession = await getSessionContext();
+    const selectedFiles = ids.map(id => library.files.find(file => file.id === id)).filter(Boolean);
+    if (!refreshedSession?.accessToken || refreshedSession.accountKey !== session.accountKey || library.syncing || !library.isComplete || selectedFiles.length !== ids.length || !ids.every(id => library.selectedIds.has(id))) {
+      showToast("Your ChatGPT account changed before deletion started. Sync Library again before deleting files.");
+      library.deletePending = false;
+      render();
+      return;
+    }
+    session.accessToken = refreshedSession.accessToken;
+
+    STATE.deleting = true;
+    STATE.deleteProgress = { current: 0, total: selectedFiles.length };
+    render();
+    let result;
+    try {
+      result = await GPTBDDelete.runDeleteBatch({
+        ids: selectedFiles,
+        deleteOne: async file => {
+          try {
+            const liveSession = await getSessionContext();
+            if (!liveSession?.accessToken || liveSession.accountKey !== session.accountKey) {
+              throw new GPTBDDelete.DeleteBatchPauseError("auth", "Your ChatGPT account changed during Library deletion.");
+            }
+            session.accessToken = liveSession.accessToken;
+            const deleted = await GPTBDLibrary.deleteLibraryFile({
+              file,
+              accessToken: session.accessToken,
+              deleteApi: GPTBDDelete
+            });
+            if (deleted) {
+              library.deleteApiAvailable = true;
+              return true;
+            }
+            library.deleteApiAvailable = false;
+            throw new GPTBDDelete.DeleteBatchPauseError("incompatible", "Library delete could not be verified.");
+          } catch (error) {
+            if (error instanceof GPTBDDelete.DeleteBatchPauseError) {
+              if (error.reason === "api" || error.reason === "incompatible") library.deleteApiAvailable = false;
+              throw error;
+            }
+            library.deleteApiAvailable = false;
+            throw new GPTBDDelete.DeleteBatchPauseError("incompatible", "Library delete API is unavailable.");
+          }
+        },
+        delayImpl: delay,
+        minIntervalMs: 1200,
+        onDeleted(file) {
+          if (STATE.library.accountKey !== session.accountKey) return;
+          library.selectedIds.delete(file.id);
+          library.files = library.files.filter(existing => existing.id !== file.id);
+          revokeLibraryThumbnails([file.id]);
+          GPTBDLibraryUi?.persistCache?.(library, window.localStorage);
+        },
+        onProgress(progress) {
+          STATE.deleteProgress.current = progress.processed;
+          render();
+        }
+      });
+      if (result.rateLimitError) {
+        await persistDeleteCooldown(session.accountKey, Date.now() + (result.rateLimitError.retryAfterMs || DEFAULT_DELETE_COOLDOWN_MS));
+        scheduleDeleteCooldownEnd();
+      }
+    } catch (_) {
+      showToast("Library delete paused unexpectedly. Remaining files were left in the cache.");
+      return;
+    } finally {
+      STATE.deleting = false;
+      library.deletePending = false;
+      render();
+    }
+    const deleted = result.deleted;
+    const failed = result.failedIds.length;
+    const noun = deleted === 1 ? "file" : "files";
+    if (result.pauseError) {
+      library.lastError = result.pauseError.message || "Library deletion paused.";
+      const rateLimit = result.rateLimitError
+        ? ` ${formatRateLimitWait(result.rateLimitError.retryAfterMs)}`
+        : "";
+      showToast(`Removed ${deleted} Library ${noun}. ${failed} selected file${failed === 1 ? " is" : "s are"} unconfirmed or unprocessed; resync to check.${rateLimit}`);
+    } else if (failed) {
+      library.lastError = "Library deletion could not be confirmed.";
+      showToast(`Removed ${deleted} Library ${noun}. ${failed} file${failed === 1 ? " failed" : "s failed"}; the delete API was disabled for safety.`);
+    } else {
+      library.lastError = "";
+      showToast(`Removed ${deleted} Library ${noun}.`);
+    }
   }
 
   /* ─────────────────────── CONVERSATION ROW HELPERS ─────────────────────── */
@@ -1310,7 +2113,7 @@
   /* ─────────────────────────── DELETE FLOW ──────────────────────────────── */
   async function deleteSelectedConversations() {
     const ids = Array.from(STATE.selectedIds);
-    if (ids.length === 0 || STATE.deleting) return;
+    if (ids.length === 0 || STATE.deleting || STATE.library.deletePending) return;
 
     await ensureCapabilityHealth({ force: isCapabilityHealthStale(), silent: true });
     if (!STATE.health.deleteApiAvailable && !STATE.health.deleteUiAvailable) {
@@ -1399,7 +2202,8 @@
 
   /* Show the in-DOM confirmation modal; returns Promise<boolean> */
   function showDeleteModal(ids, titles, selectionContext = { mode: "default" }) {
-    if (STATE.skipDeleteWarning) return Promise.resolve(true);
+    const isLibraryDelete = selectionContext.mode === "library";
+    if (STATE.skipDeleteWarning && !isLibraryDelete) return Promise.resolve(true);
 
     return new Promise(resolve => {
       const modal = document.getElementById("gptbd-modal");
@@ -1410,28 +2214,41 @@
       const previewEl = modal.querySelector('[data-role="modal-preview"]');
       const confirmLabel = modal.querySelector('[data-role="modal-confirm-label"]');
       const warningCheck = modal.querySelector('[data-role="modal-warning-check"]');
+      const warningCheckLabel = warningCheck?.closest(".gptbd-modal__check")?.querySelector(".gptbd-modal__check-label");
       const skipWarningCheck = modal.querySelector('[data-role="modal-skip-warning-check"]');
       const confirmBtn = modal.querySelector('[data-action="modal-confirm"]');
 
       resetModalToDeleteDefaults(modal);
+      const skipWarningCheckWrap = skipWarningCheck?.closest(".gptbd-modal__check");
+      if (skipWarningCheckWrap) skipWarningCheckWrap.hidden = isLibraryDelete;
 
       const isProjectDelete = selectionContext.mode === "project";
-      const noun = isProjectDelete ? "project conversation" : "conversation";
+      const noun = isLibraryDelete ? "Library file" : isProjectDelete ? "project conversation" : "conversation";
       if (titleEl) {
-        titleEl.textContent = `Delete ${count}\u00a0${noun}${count === 1 ? "" : "s"}?`;
+        titleEl.textContent = isLibraryDelete
+          ? `Remove ${count}\u00a0${noun}${count === 1 ? "" : "s"}?`
+          : `Delete ${count}\u00a0${noun}${count === 1 ? "" : "s"}?`;
       }
-      if (isProjectDelete) {
+      if (isProjectDelete || isLibraryDelete) {
         const subtitleEl = modal.querySelector(".gptbd-modal__subtitle");
         const warningText = modal.querySelector(".gptbd-modal__warning-text");
         if (subtitleEl) {
-          subtitleEl.textContent = "Permanent. This deletes the chat, not just removes it from the project.";
+          subtitleEl.textContent = isLibraryDelete
+            ? "Remove selected files from your ChatGPT Library. Conversations are not deleted."
+            : "Permanent. This deletes the chat, not just removes it from the project.";
         }
         if (warningText) {
-          warningText.textContent = "These project chats will be permanently deleted from ChatGPT, not just removed from this project.";
+          warningText.textContent = isLibraryDelete
+            ? "These Library files will be removed from your ChatGPT Library. Conversations are not deleted."
+            : "These project chats will be permanently deleted from ChatGPT, not just removed from this project.";
         }
       }
+      if (warningCheckLabel && isLibraryDelete) {
+        warningCheckLabel.textContent = "I understand these selected files will be removed from my ChatGPT Library.";
+      }
       if (confirmLabel) {
-        confirmLabel.textContent = `Delete\u00a0${count}\u00a0${isProjectDelete ? "project chat" : "conversation"}${count === 1 ? "" : "s"}`;
+        const confirmNoun = isLibraryDelete ? "Library file" : isProjectDelete ? "project chat" : "conversation";
+        confirmLabel.textContent = `${isLibraryDelete ? "Remove" : "Delete"}\u00a0${count}\u00a0${confirmNoun}${count === 1 ? "" : "s"}`;
       }
       if (warningCheck) warningCheck.checked = false;
       if (skipWarningCheck) skipWarningCheck.checked = false;
@@ -1459,7 +2276,7 @@
       window.setTimeout(() => { if (warningCheck) warningCheck.focus(); }, 60);
 
       async function done(result) {
-        if (result && skipWarningCheck?.checked) {
+        if (result && !isLibraryDelete && skipWarningCheck?.checked) {
           await setSkipDeleteWarningPreference(true);
         }
         if (warningCheck) warningCheck.removeEventListener("change", syncConfirmState);
@@ -1620,18 +2437,29 @@
         registerCapabilityFailure("deleteApi", `Delete API returned ${response.status}.`);
         return false;
       }
-      const removed = await waitForConversationRemoval(id, 3000);
-      if (removed) {
-        registerCapabilitySuccess("deleteApi");
-        return true;
+      // An API mutation does not update ChatGPT's client-side sidebar state.
+      // Confirm with the response, then let onDeleted update our list/cache.
+      if (response.status !== 204) {
+        let timeoutId;
+        let payload;
+        try {
+          payload = await Promise.race([
+            response.json(),
+            new Promise((_, reject) => {
+              timeoutId = window.setTimeout(() => reject(new Error("Delete confirmation timed out")), 10000);
+            })
+          ]);
+        } catch (_) {
+          throw new GPTBDDelete.DeleteBatchPauseError("incompatible", "ChatGPT did not return a readable deletion confirmation. Resync to check the remaining chats.");
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+        if (payload?.success !== true) {
+          throw new GPTBDDelete.DeleteBatchPauseError("incompatible", "ChatGPT did not confirm deletion. Resync to check the remaining chats.");
+        }
       }
-      const row = document.querySelector(`[data-gptbd-conversation-id="${CSS.escape(id)}"]`);
-      if (row?.dataset.gptbdConversationSource === "project") {
-        registerCapabilitySuccess("deleteApi");
-        return true;
-      }
-      registerCapabilityFailure("deleteApi", "Delete API returned success but the conversation stayed visible.");
-      return false;
+      registerCapabilitySuccess("deleteApi");
+      return true;
     } catch (error) {
       if (error instanceof GPTBDDelete.DeleteBatchPauseError) throw error;
       registerCapabilityFailure("deleteApi", "Delete API request failed.");
@@ -1715,7 +2543,7 @@
 
   /* ──────────────────────────── SYNC ALL ────────────────────────────────── */
   async function syncAllChats() {
-    if (STATE.syncingAll || STATE.deleting) return;
+    if (STATE.syncingAll || STATE.deleting || STATE.library.deletePending) return;
     await ensureCapabilityHealth({ force: isCapabilityHealthStale(), silent: true });
     if (!STATE.health.syncAvailable) {
       showToast(STATE.health.note || "Sync is temporarily unavailable. Refresh ChatGPT and try again.");
@@ -2117,10 +2945,16 @@
   async function getSessionContext() {
     try {
       const response = await fetch("/api/auth/session", { credentials: "include" });
-      if (!response.ok) return null;
+      if (!response.ok) {
+        switchLibraryAccount(null);
+        return null;
+      }
       const data = await response.json();
       const accessToken = data?.accessToken || null;
-      if (!accessToken) return null;
+      if (!accessToken) {
+        switchLibraryAccount(null);
+        return null;
+      }
       const accountKey = data?.user?.id || data?.account?.id || getJwtSubject(accessToken);
       if (accountKey && STATE.accountKey !== accountKey) {
         STATE.accountKey = accountKey;
@@ -2130,13 +2964,39 @@
           render();
         });
       }
+      switchLibraryAccount(accountKey || null);
       return {
         accessToken,
         accountKey
       };
     } catch (_) {
+      switchLibraryAccount(null);
       return null;
     }
+  }
+
+  function switchLibraryAccount(accountKey) {
+    if (accountKey && accountKey !== lastLibrarySessionAccountKey) {
+      // A newly active account gets one automatic session sync even if this
+      // tab previously visited it before switching away.
+      libraryAutoSyncAttempts.delete(accountKey);
+    }
+    lastLibrarySessionAccountKey = accountKey || null;
+    if (STATE.library.accountKey === accountKey) return;
+    revokeLibraryThumbnails();
+    if (GPTBDLibraryUi?.loadCache) {
+      GPTBDLibraryUi.loadCache(STATE.library, window.localStorage, accountKey);
+      return;
+    }
+    STATE.library.accountKey = accountKey;
+    STATE.library.files = [];
+    STATE.library.selectedIds.clear();
+    STATE.library.cacheLoadedAt = null;
+    STATE.library.syncApiAvailable = null;
+    STATE.library.deleteApiAvailable = null;
+    STATE.library.isComplete = false;
+    STATE.library.syncing = false;
+    STATE.library.syncRunId = (STATE.library.syncRunId || 0) + 1;
   }
 
   function getJwtSubject(token) {
@@ -2333,7 +3193,11 @@
       capabilities: {
         sync: Boolean(health.syncAvailable),
         deleteApi: Boolean(health.deleteApiAvailable),
-        deleteUi: Boolean(health.deleteUiAvailable)
+        deleteUi: Boolean(health.deleteUiAvailable),
+        // A successful Library listing does not prove delete compatibility.
+        // This stays unknown until a stream delete is verified by a fresh listing.
+        librarySync: STATE.library.syncApiAvailable,
+        libraryDelete: STATE.library.deleteApiAvailable
       }
     };
   }
@@ -2644,21 +3508,27 @@
   }
 
   async function loadPreferences() {
-    if (!chrome?.storage?.local) return;
+    if (!chrome?.storage?.local) {
+      STATE.mode = isLibraryRoute() ? "library" : "chats";
+      return;
+    }
     try {
       const stored = await chrome.storage.local.get([
         UI_HIDDEN_KEY,
+        TOOLBAR_MODE_KEY,
         SKIP_DELETE_WARNING_KEY,
         REVIEW_SESSION_COUNT_KEY,
         REVIEW_PROMPT_HIDDEN_KEY
       ]);
       STATE.uiHidden = Boolean(stored?.[UI_HIDDEN_KEY]);
+      STATE.mode = isLibraryRoute() || stored?.[TOOLBAR_MODE_KEY] === "library" ? "library" : "chats";
       STATE.skipDeleteWarning = Boolean(stored?.[SKIP_DELETE_WARNING_KEY]);
       STATE.reviewSessionCount = normalizeStoredCount(stored?.[REVIEW_SESSION_COUNT_KEY]);
       STATE.reviewPromptHidden = Boolean(stored?.[REVIEW_PROMPT_HIDDEN_KEY]);
       await countReviewSession();
     } catch (_) {
       STATE.uiHidden = false;
+      STATE.mode = isLibraryRoute() ? "library" : "chats";
       STATE.skipDeleteWarning = false;
       STATE.reviewSessionCount = 0;
       STATE.reviewPromptHidden = false;
@@ -2668,10 +3538,23 @@
   async function setUiHiddenPreference(hidden) {
     STATE.uiHidden = hidden;
     render();
+    if (!hidden && STATE.mode === "library") void ensureLibraryCacheForCurrentAccount();
     if (!chrome?.storage?.local) return;
     try {
       await chrome.storage.local.set({ [UI_HIDDEN_KEY]: hidden });
     } catch (_) {}
+  }
+
+  async function setToolbarModePreference(mode) {
+    if (!chrome?.storage?.local) return;
+    try {
+      await chrome.storage.local.set({ [TOOLBAR_MODE_KEY]: mode === "library" ? "library" : "chats" });
+    } catch (_) {}
+  }
+
+  function isLibraryRoute() {
+    return GPTBDLibraryUi?.isLibraryPath?.(window.location.pathname)
+      || /^\/(?:library|space\/files)(?:\/|$)/i.test(window.location.pathname || "");
   }
 
   async function setSkipDeleteWarningPreference(skip) {
@@ -2769,12 +3652,14 @@
     const warningWrap = modal.querySelector(".gptbd-modal__warning");
     const warningText = modal.querySelector(".gptbd-modal__warning-text");
     const warningCheckWrap = modal.querySelector('[data-role="modal-warning-check"]')?.closest(".gptbd-modal__check");
+    const warningCheckLabel = warningCheckWrap?.querySelector(".gptbd-modal__check-label");
     const skipWarningCheckWrap = modal.querySelector('[data-role="modal-skip-warning-check"]')?.closest(".gptbd-modal__check");
 
     if (subtitleEl) subtitleEl.textContent = DEFAULT_DELETE_MODAL_SUBTITLE;
     if (warningWrap) warningWrap.hidden = false;
     if (warningText) warningText.textContent = DEFAULT_DELETE_MODAL_WARNING;
     if (warningCheckWrap) warningCheckWrap.hidden = false;
+    if (warningCheckLabel) warningCheckLabel.textContent = "I understand this delete is permanent and cannot be recovered.";
     if (skipWarningCheckWrap) skipWarningCheckWrap.hidden = false;
   }
 
@@ -2845,11 +3730,33 @@
     const projectMode = options.mode === "project";
     const header = document.createElement("div");
     header.className = `gptbd-results-header${projectMode ? " gptbd-results-header--project" : ""}`;
-    header.setAttribute("aria-hidden", "true");
 
-    const title = document.createElement("span");
+    const title = document.createElement("label");
     title.className = "gptbd-results-header__title";
-    title.textContent = projectMode ? "Project chat" : "Chat";
+    const selectAll = document.createElement("input");
+    selectAll.type = "checkbox";
+    selectAll.className = "gptbd-result-checkbox";
+    selectAll.dataset.role = "chat-select-all-checkbox";
+    const ids = getSelectableConversationIds();
+    const selectedCount = ids.filter(id => STATE.selectedIds.has(id)).length;
+    selectAll.checked = ids.length > 0 && selectedCount === ids.length;
+    selectAll.indeterminate = selectedCount > 0 && selectedCount < ids.length;
+    selectAll.disabled = STATE.deleting || STATE.syncingAll || STATE.library.deletePending
+      || ids.length === 0 || !canDeleteSelection(ids);
+    selectAll.setAttribute("aria-label", "Select all chats matching the current filters");
+    selectAll.title = "Select or clear all chats matching the current filters, including those beyond the displayed list";
+    selectAll.addEventListener("change", () => {
+      if (STATE.deleting || STATE.syncingAll || STATE.library.deletePending) return;
+      const currentIds = getSelectableConversationIds();
+      if (!canDeleteSelection(currentIds)) return;
+      const scrollTop = header.parentElement?.scrollTop || 0;
+      currentIds.forEach(id => selectAll.checked ? STATE.selectedIds.add(id) : STATE.selectedIds.delete(id));
+      STATE.lastSelectedId = null;
+      syncCheckboxes();
+      render();
+      restoreResultsPanelScroll(scrollTop);
+    });
+    title.append(selectAll, document.createTextNode(projectMode ? "Project chat" : "Chat"));
 
     const open = document.createElement("span");
     open.className = "gptbd-results-header__open";
@@ -3059,6 +3966,7 @@
 
   /* ─────────────────────────── INIT ─────────────────────────────────────── */
   async function init() {
+    GPTBDLibraryUi?.purgeLegacyCaches?.(window.localStorage);
     loadCache();
     loadProjectIndex();
     await loadPreferences();

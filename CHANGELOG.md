@@ -8,6 +8,31 @@ This project follows a simple semantic versioning approach:
 - `MINOR`: new features that stay backward-compatible
 - `PATCH`: fixes, polish, and safe maintenance updates
 
+## [1.2.1] - 2026-10-02
+
+- Support ChatGPT's new `/space/files` page, including navigation without a page refresh; retain the older `/library` route
+- Fix Library module detection in Firefox
+- Restore thumbnail previews using ChatGPT's new thumbnail route and same-origin redirects without persistent preview caching
+- Speed up chat and Library deletion by counting request time toward the existing 1.2-second interval; retain rate-limit pauses
+- Show a prominent plain-English explanation of deletion pacing
+- Add a select-all checkbox beside the Chat heading, including partial-selection state and filter-aware selection
+- Remove API-confirmed chat deletions from the list immediately instead of waiting for ChatGPT's sidebar to refresh
+- Preserve manual tab selection and explain when an operation temporarily blocks switching
+- Clarify that the extension's file selection is independent of ChatGPT's Images/Uploads filters
+
+## [1.2.0] - 2026-09-30
+
+- Automatically sync when opening/restoring Library mode and show tiles progressively without persistent file or thumbnail caching
+
+- Add separate Library file sync, filename search, selection, and bulk deletion for issue #7
+- Keep Library metadata and previews in tab memory only; purge legacy Library caches
+- Add a responsive five-column thumbnail grid with filtered select-all and on-demand no-store previews
+- Use the current native Library DELETE endpoint and explicit JSON success response
+- Require explicit Library deletion confirmation and reuse paced batches and rate-limit cooldowns
+- Report Library compatibility separately and pause on unrecognized API responses
+- Add regression coverage for progressive sync, account switching, cache cleanup, and deletion safeguards
+- Maintainer verified Library syncing and deletion in live testing
+
 ## [1.1.1] - 2026-08-25
 
 Sync reliability fix.

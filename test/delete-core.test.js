@@ -15,6 +15,7 @@ test("paces bulk deletes and reports confirmed successes", async () => {
   const deletedIds = [];
   const result = await runDeleteBatch({
     ids: ["a", "b", "c"],
+    nowImpl: () => 0,
     deleteOne: async () => true,
     delayImpl: async ms => { delays.push(ms); },
     onDeleted: async id => { deletedIds.push(id); }
@@ -101,3 +102,28 @@ test("aborts a hanging delete request", async () => {
     error => error instanceof DeleteBatchPauseError && error.reason === "timeout"
   );
 });
+
+for (const duration of [800, 1600]) {
+  test(`counts ${duration}ms request time toward pacing without overlapping deletes`, async () => {
+    let clock = 0;
+    let active = 0;
+    const starts = [];
+    const delays = [];
+    const result = await runDeleteBatch({
+      ids: ['a', 'b', 'c'],
+      nowImpl: () => clock,
+      delayImpl: async ms => { delays.push(ms); clock += ms; },
+      deleteOne: async () => {
+        assert.equal(active++, 0);
+        starts.push(clock);
+        await Promise.resolve();
+        clock += duration;
+        active--;
+        return true;
+      }
+    });
+    assert.deepEqual(starts, duration === 800 ? [0, 1200, 2400] : [0, 1600, 3200]);
+    assert.deepEqual(delays, duration === 800 ? [400, 400] : []);
+    assert.equal(result.deleted, 3);
+  });
+}
