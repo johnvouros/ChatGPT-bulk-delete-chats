@@ -44,6 +44,15 @@ test('Library search is case insensitive, trims whitespace, and preserves source
   assert.equal(files.length, 2);
 });
 
+test('recognizes current and legacy Library routes only', () => {
+  assert.equal(library.isLibraryPath('/space/files?tab=images'), true);
+  assert.equal(library.isLibraryPath('/space/files/uploads'), true);
+  assert.equal(library.isLibraryPath('/library'), true);
+  assert.equal(library.isLibraryPath('/library/legacy'), true);
+  assert.equal(library.isLibraryPath('/space'), false);
+  assert.equal(library.isLibraryPath('/c/example'), false);
+});
+
 test('Missing identity and storage failures fail safely without persistence', () => {
   const state = library.createState();
   assert.equal(library.persistCache(state, storage()), true);

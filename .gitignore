@@ -3,3 +3,7 @@ docs/store-screenshots/05-search-results-hero.png
 docs/store-screenshots/chromestoremain (1).png
 docs/store-screenshots/marquee-1400x560.png
 docs/store-screenshots/marquee.png
+
+# Extracted local browser test packages
+dist/firefox-test-*/
+dist/chrome-test-*/

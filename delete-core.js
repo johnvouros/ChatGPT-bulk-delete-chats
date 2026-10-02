@@ -65,6 +65,7 @@
       onDeleted = () => {},
       onProgress = () => {},
       delayImpl = ms => new Promise(resolve => setTimeout(resolve, ms)),
+      nowImpl = () => performance.now(),
       minIntervalMs = 1200
     } = options || {};
     if (typeof deleteOne !== "function") throw new TypeError("deleteOne is required");
@@ -73,9 +74,15 @@
     let deleted = 0;
     let processed = 0;
     let pauseError = null;
+    let lastStartedAt = null;
 
     for (let index = 0; index < ids.length; index += 1) {
-      if (index > 0 && minIntervalMs > 0) await delayImpl(minIntervalMs);
+      if (lastStartedAt !== null && minIntervalMs > 0) {
+        const remainingMs = minIntervalMs - (nowImpl() - lastStartedAt);
+        if (remainingMs > 0) await delayImpl(remainingMs);
+      }
+      // Count request and UI work toward the interval; never overlap attempts.
+      lastStartedAt = nowImpl();
       const id = ids[index];
       let success;
       try {

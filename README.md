@@ -1,6 +1,6 @@
 # ChatGPT Bulk Delete
 
-![Version](https://img.shields.io/badge/version-1.2.0-3b82f6)
+![Version](https://img.shields.io/badge/version-1.2.1-3b82f6)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-10b981)
 ![ChatGPT](https://img.shields.io/badge/Works%20on-chatgpt.com-111827)
 ![Firefox](https://img.shields.io/badge/Firefox-Compatible-f97316)
@@ -82,7 +82,7 @@ Note: Firefox temporary add-ons are removed when the browser restarts unless you
 
 ### Library files
 
-Switch the toolbar to `Library`; the file list syncs automatically. After refresh, Library mode is restored and sync starts again, with tiles appearing as each page arrives. Search by filename and select files once loading finishes. Review the file names in the confirmation before continuing. Library deletion has its own mandatory confirmation, even if chat warnings are disabled.
+Switch the toolbar to `Library`; the file list syncs automatically. ChatGPT now exposes files under [Space files](https://chatgpt.com/space/files?tab=images). Opening that page selects Library mode automatically; the older `/library` route is also supported. The extension uses its own file list and filename filter: ChatGPT’s Images/Uploads tabs do not restrict the extension’s selection. After refresh, Library mode is restored and sync starts again, with tiles appearing as each page arrives. Search by filename and select files once loading finishes. Review the file names in the confirmation before continuing. Library deletion has its own mandatory confirmation, even if chat warnings are disabled.
 
 Library shows a five-column thumbnail grid on desktop, with fewer columns on smaller screens. `Select all` selects every file matching the current search, including files beyond the currently displayed tiles. Review the total and file names before confirming.
 

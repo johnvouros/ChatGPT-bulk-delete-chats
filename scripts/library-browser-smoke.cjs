@@ -40,7 +40,7 @@ const root = path.resolve(__dirname, '..');
           await new Promise(resolve => { releaseLibrary = resolve; });
           delayLibrary = false;
         }
-        return route.fulfill({ json: { items: [{ kind: 'directory', id: 'mount-a', name: 'External folder' }, ...nodes.map(file => ({ kind: 'file', id: file.library_file_id, file_id: file.file_id, name: file.file_name, thumbnail_url: file.file_id === 'file-extra-1' ? 'https://untrusted.example/preview.png' : `/backend-api/estuary/content?id=${file.file_id}`, mime_type: 'image/png' }))], cursor: null } });
+        return route.fulfill({ json: { items: [{ kind: 'directory', id: 'mount-a', name: 'External folder' }, ...nodes.map(file => ({ kind: 'file', id: file.library_file_id, file_id: file.file_id, name: file.file_name, thumbnail_url: file.file_id === 'file-extra-1' ? 'https://untrusted.example/preview.png' : file.file_id === 'file-b' ? `/library/files/${file.library_file_id}/thumbnail` : `/backend-api/estuary/content?id=${file.file_id}`, mime_type: 'image/png' }))], cursor: null } });
       }
       if (url.pathname.startsWith('/backend-api/files/library/files/') && request.method() === 'DELETE') {
         deletes.push({ url: url.href, method: request.method() });
@@ -49,7 +49,7 @@ const root = path.resolve(__dirname, '..');
         return route.fulfill({ json: { success: true } });
       }
       if (url.pathname === '/backend-api/estuary/content' && url.searchParams.get('id') === 'file-extra-0') return route.fulfill({ status: 302, headers: { location: 'https://untrusted.example/redirect.png' } });
-      if (url.pathname === '/backend-api/estuary/content') return route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV1sAAAAASUVORK5CYII=', 'base64') });
+      if (url.pathname === '/backend-api/estuary/content' || url.pathname === '/library/files/lib-b/thumbnail') return route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV1sAAAAASUVORK5CYII=', 'base64') });
       return route.fulfill({ status: 404, body: '' });
     });
     await page.goto('https://chatgpt.com/');
@@ -60,7 +60,7 @@ const root = path.resolve(__dirname, '..');
       window.testRevokedBlobs = [];
       const originalFetch = window.fetch.bind(window);
       window.fetch = (url, options) => {
-        if (String(url).includes('/estuary/content')) window.testPreviewFetches.push({ cache: options?.cache, credentials: options?.credentials });
+        if (String(url).includes('/estuary/content') || String(url).includes('/thumbnail')) window.testPreviewFetches.push({ cache: options?.cache, credentials: options?.credentials, mode: options?.mode, redirect: options?.redirect });
         return originalFetch(url, options);
       };
       const create = URL.createObjectURL.bind(URL);
@@ -89,8 +89,13 @@ const root = path.resolve(__dirname, '..');
     await page.locator('[data-action="set-mode"][data-mode="library"]').click();
     await page.waitForFunction(() => document.querySelector('[data-role="library-count"]').textContent.includes('56'));
     await page.waitForFunction(() => window.testCreatedBlobs.length > 0);
+    await page.waitForFunction(() => {
+      const image = document.querySelector('[data-library-thumbnail-id="lib-b"]');
+      return image && image.complete && image.naturalWidth > 0;
+    });
     assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('gptbd-library-cache'))), false, 'Library metadata must never persist');
     assert.equal(await page.evaluate(() => window.testPreviewFetches.every(request => request.cache === 'no-store')), true);
+    assert.equal(await page.evaluate(() => window.testPreviewFetches.every(request => request.mode === 'same-origin' && request.redirect === 'follow')), true);
     const columns = await page.locator('[data-role="library-grid"]').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length);
     assert.equal(columns, 5, 'desktop grid must show five tiles per row');
     assert.equal(await page.locator('input[data-library-id]').count(), 50, 'large libraries should render a limited tile page');

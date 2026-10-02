@@ -52,13 +52,29 @@ const file = id => ({ kind: 'file', id: `lib-${id}`, file_id: `file-${id}`, name
         };
       }, stored);
       await page.addStyleTag({ path: path.join(root, 'styles.css') });
-      for (const script of scripts) await page.addScriptTag({ path: path.join(root, script) });
+      for (const script of scripts) {
+        if (script === 'content.js' && process.env.TEST_ISOLATED_GLOBALS === '1') {
+          // Model Firefox's distinct content-script global and window wrapper.
+          // Helpers are on globalThis, while window does not expose them.
+          const source = fs.readFileSync(path.join(root, script), 'utf8');
+          await page.addScriptTag({ content: `(() => {
+            const window = new Proxy(globalThis, { get(target, key) {
+              if (String(key).startsWith('GPTBD')) return undefined;
+              const value = Reflect.get(target, key);
+              return typeof value === 'function' ? value.bind(target) : value;
+            }});
+            ${source}
+          })();` });
+        } else {
+          await page.addScriptTag({ path: path.join(root, script) });
+        }
+      }
     }
     const sync = () => page.locator('[data-action="library-sync"]');
     const tiles = () => page.locator('input[data-library-id]');
     const idle = () => page.waitForFunction(() => !document.querySelector('[data-action="library-sync"]').disabled);
     const focus = () => page.evaluate(() => { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('focus')); });
-    await page.goto('https://chatgpt.com/library');
+    await page.goto('https://chatgpt.com/space/files?tab=images');
     await install();
     await page.waitForFunction(() => document.querySelectorAll('input[data-library-id]').length === 1);
     assert.equal(await sync().isDisabled(), true, 'first-page tiles must appear before sync completes');
@@ -108,6 +124,8 @@ await tiles().first().check();
     assert.equal(calls, beforePendingSync, 'resync must not start during delete preparation');
     releaseSession();
     await page.waitForFunction(() => document.querySelector('#gptbd-modal').dataset.visible === 'true');
+    await page.locator('[data-mode="chats"]').evaluate(button => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    assert.equal(await page.locator('[data-mode="library"]').getAttribute('aria-selected'), 'true', 'pending file confirmation must block switching to chat deletion');
     await page.locator('#gptbd-modal [data-action="modal-cancel"]').last().click();
     phase = 'failed-resync';
     await sync().click();
@@ -128,6 +146,18 @@ await tiles().first().check();
     await page.locator('[data-action="set-mode"][data-mode="library"]').click();
     assert.equal(calls, failedCalls, 'failed sync must not auto-retry in a loop');
     assert.equal(await page.evaluate(() => Object.keys(localStorage).some(k => k.startsWith('gptbd-library-cache'))), false);
+    // Enter the new files route via client-side navigation from Chats.
+    await page.locator('[data-action="set-mode"][data-mode="chats"]').click();
+    await page.evaluate(() => {
+      history.pushState({}, '', '/space/files?tab=images');
+      document.body.appendChild(document.createElement('span'));
+    });
+    await page.waitForFunction(() => document.querySelector('[data-mode="library"]').getAttribute('aria-selected') === 'true');
+    assert.equal(calls, failedCalls, 'route entry must respect failed/cleared session retry suppression');
+    // Explicitly choosing Chats on this route must remain respected.
+    await page.locator('[data-action="set-mode"][data-mode="chats"]').click();
+    await page.evaluate(() => document.body.appendChild(document.createElement('span')));
+    assert.equal(await page.locator('[data-mode="chats"]').getAttribute('aria-selected'), 'true');
     assert.deepEqual(errors, []);
     console.log('Auto-sync smoke passed: progressive tiles, safe selection, single sync, mode restoration, rollback, clear-session, no retry loops, no persistent Library data.');
   } finally { await browser.close(); }

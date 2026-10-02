@@ -8,6 +8,18 @@ This project follows a simple semantic versioning approach:
 - `MINOR`: new features that stay backward-compatible
 - `PATCH`: fixes, polish, and safe maintenance updates
 
+## [1.2.1] - 2026-10-02
+
+- Support ChatGPT's new `/space/files` page, including navigation without a page refresh; retain the older `/library` route
+- Fix Library module detection in Firefox
+- Restore thumbnail previews using ChatGPT's new thumbnail route and same-origin redirects without persistent preview caching
+- Speed up chat and Library deletion by counting request time toward the existing 1.2-second interval; retain rate-limit pauses
+- Show a prominent plain-English explanation of deletion pacing
+- Add a select-all checkbox beside the Chat heading, including partial-selection state and filter-aware selection
+- Remove API-confirmed chat deletions from the list immediately instead of waiting for ChatGPT's sidebar to refresh
+- Preserve manual tab selection and explain when an operation temporarily blocks switching
+- Clarify that the extension's file selection is independent of ChatGPT's Images/Uploads filters
+
 ## [1.2.0] - 2026-09-30
 
 - Automatically sync when opening/restoring Library mode and show tiles progressively without persistent file or thumbnail caching

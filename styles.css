@@ -1474,3 +1474,32 @@
     justify-content: flex-start;
   }
 }
+
+/* Shared by chat and Library deletion; stays visible throughout the batch. */
+.gptbd-delete-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 8px 12px;
+  padding: 12px 14px;
+  color: #fff0c2;
+  background: #3b301b;
+  border: 1px solid #b78a35;
+  border-left: 4px solid #f0bd57;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.gptbd-delete-notice__title {
+  color: #ffda85;
+  font-size: 14px;
+  font-weight: 700;
+}
+.gptbd-delete-notice[hidden] { display: none; }
+
+.gptbd-results-header__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}

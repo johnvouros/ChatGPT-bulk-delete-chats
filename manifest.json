@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Bulk Delete",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Bulk delete ChatGPT chats and Library files with search, filters, thumbnail previews, and confirmation.",
   "browser_specific_settings": {
     "gecko": {

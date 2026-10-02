@@ -45,6 +45,11 @@
     return normalized.filter(file => String(file.title || file.fileName || "").toLowerCase().includes(query));
   }
 
+  function isLibraryPath(pathname) {
+    const path = String(pathname || "").split(/[?#]/, 1)[0];
+    return /^\/(?:library|space\/files)(?:\/|$)/i.test(path);
+  }
+
   function loadCache(state, storage, accountKey) {
     state.accountKey = accountKey || null;
     state.syncing = false;
@@ -98,5 +103,5 @@
     } catch (_) {}
   }
 
-  return { CACHE_PREFIX, cacheKey, createState, filterFiles, loadCache, persistCache, clearCache, purgeLegacyCaches, normalizeFiles };
+  return { CACHE_PREFIX, cacheKey, createState, filterFiles, isLibraryPath, loadCache, persistCache, clearCache, purgeLegacyCaches, normalizeFiles };
 });
