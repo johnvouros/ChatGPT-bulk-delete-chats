@@ -8,6 +8,14 @@ This project follows a simple semantic versioning approach:
 - `MINOR`: new features that stay backward-compatible
 - `PATCH`: fixes, polish, and safe maintenance updates
 
+## [1.2.2] - 2026-10-09
+
+- Increase chat, Library, and confirmation checkboxes to 18 px
+- Add brighter borders and solid backgrounds to make unchecked boxes easier to see
+- Improve hover and keyboard-focus indicators
+- Use native checkbox rendering in system high-contrast mode
+- Retain all 1.2.1 compatibility, deletion-speed, and confirmation safeguards
+
 ## [1.2.1] - 2026-10-02
 
 - Support ChatGPT's new `/space/files` page, including navigation without a page refresh; retain the older `/library` route
