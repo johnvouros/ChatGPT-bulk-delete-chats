@@ -140,6 +140,8 @@
   /* modal resolve handle — set by showDeleteModal, cleared on resolution */
   let activeModalResolve = null;
   let runtimeBridgeReady = false;
+  let observedRoutePath = window.location.pathname;
+  let routeCheckQueued = false;
 
   /* ─────────────────────────────── BOOT ─────────────────────────────────── */
   function boot() {
@@ -147,6 +149,7 @@
     injectShell();
     refreshConversationRows();
     observeDom();
+    observeRouteChanges();
     observePreferenceChanges();
     setupRuntimeBridge();
     render();
@@ -165,6 +168,51 @@
     void ensureCapabilityHealth({ force: true, silent: true });
   }
 
+  function observeRouteChanges() {
+    if (observeRouteChanges.bound) return;
+    observeRouteChanges.bound = true;
+    const schedule = () => {
+      if (routeCheckQueued) return;
+      routeCheckQueued = true;
+      window.queueMicrotask(() => {
+        routeCheckQueued = false;
+        applyLibraryRouteMode();
+      });
+    };
+    window.addEventListener("popstate", schedule);
+    ["pushState", "replaceState"].forEach(method => {
+      const original = window.history?.[method];
+      if (typeof original !== "function") return;
+      window.history[method] = function (...args) {
+        const result = original.apply(this, args);
+        schedule();
+        return result;
+      };
+    });
+  }
+
+  function applyLibraryRouteMode() {
+    const path = window.location.pathname;
+    if (!isLibraryRoute()) {
+      observedRoutePath = path;
+      return;
+    }
+    // A user can deliberately keep Chats selected while remaining on the
+    // Library page; only an actual route transition changes the mode.
+    if (path === observedRoutePath) return;
+    // Retain a Library route transition until the active operation releases
+    // the toolbar; the DOM observer will then apply it.
+    if (STATE.deleting || STATE.syncingAll || STATE.library.syncing || STATE.library.deletePending) return;
+    observedRoutePath = path;
+    STATE.mode = "library";
+    STATE.enabled = false;
+    STATE.selectedIds.clear();
+    STATE.lastSelectedId = null;
+    refreshConversationRows();
+    render();
+    if (!STATE.uiHidden) void ensureLibraryCacheForCurrentAccount();
+  }
+
   /* ───────────────────────────── SHELL HTML ─────────────────────────────── */
   function injectShell() {
     if (document.getElementById("gpt-bulk-delete-root")) return;
@@ -178,6 +226,11 @@
                   role="tab" aria-selected="true">Chats</button>
           <button type="button" class="gptbd-mode-tab" data-action="set-mode" data-mode="library"
                   role="tab" aria-selected="false">Library</button>
+        </div>
+
+        <div class="gptbd-delete-notice" data-role="delete-pacing-notice" role="status" hidden>
+          <strong class="gptbd-delete-notice__title">Why is deletion slow?</strong>
+          <span>ChatGPT limits how quickly files and chats can be deleted. We add short pauses to reduce interruptions. Large selections may take a few minutes.</span>
         </div>
 
         <!-- ── Main horizontal bar ── -->
@@ -349,6 +402,8 @@
           <div class="gptbd-library__meta">
             <span class="gptbd-meta-text">Session only · thumbnails not saved by extension</span>
             <span class="gptbd-meta-dot" aria-hidden="true">·</span>
+            <span class="gptbd-meta-text">All Library files · use this panel’s filter to narrow selection</span>
+            <span class="gptbd-meta-dot" aria-hidden="true">·</span>
             <span data-role="library-count">0 files</span>
             <span class="gptbd-meta-dot" aria-hidden="true">·</span>
             <span data-role="library-selection-count">0 selected</span>
@@ -431,7 +486,16 @@
 
       if (action === "set-mode") {
         const nextMode = el.dataset.mode === "library" ? "library" : "chats";
-        if (STATE.deleting || STATE.syncingAll || STATE.library.syncing) return;
+        if (STATE.deleting || STATE.library.deletePending) {
+          showToast("Finish or cancel the current deletion before switching tabs.");
+          return;
+        }
+        if (STATE.syncingAll || STATE.library.syncing) {
+          showToast("Still loading your list. You can switch tabs when loading finishes.");
+          return;
+        }
+        // A deliberate tab choice takes precedence over a deferred route update.
+        observedRoutePath = window.location.pathname;
         STATE.mode = nextMode;
         void setToolbarModePreference(nextMode);
         if (nextMode === "library") {
@@ -484,6 +548,7 @@
       }
 
       if (action === "toggle") {
+        if (STATE.library.deletePending) return;
         const wasEnabled = STATE.enabled;
         STATE.enabled = !STATE.enabled;
         if (!STATE.enabled) {
@@ -683,6 +748,7 @@
     STATE.observer = new MutationObserver(() => {
       window.clearTimeout(STATE.refreshTimer);
       STATE.refreshTimer = window.setTimeout(() => {
+        applyLibraryRouteMode();
         refreshConversationRows();
         void ensureCapabilityHealth({ force: false, silent: true });
         render();
@@ -700,6 +766,8 @@
     toolbar.hidden = STATE.uiHidden;
     if (STATE.uiHidden) return;
 
+    const deletionNotice = toolbar.querySelector('[data-role="delete-pacing-notice"]');
+    if (deletionNotice) deletionNotice.hidden = !STATE.deleting;
     const libraryActive = STATE.mode === "library";
     toolbar.querySelectorAll("[data-role='chats-bar'], [data-role='chats-submeta'], [data-role='chats-progress'], [data-role='chats-results-actions'], [data-role='chats-results']")
       .forEach(element => { element.hidden = libraryActive; });
@@ -721,7 +789,7 @@
     const selectedCount = STATE.selectedIds.size;
     const matchCount = getSearchResults().length;
     const hasCache = STATE.cachedConversations.length > 0;
-    const busy = STATE.deleting || STATE.syncingAll;
+    const busy = STATE.deleting || STATE.syncingAll || STATE.library.deletePending;
     const health = STATE.health;
     const deleteCoolingDown = isDeleteCoolingDown();
     const hasVisibleSidebar = hasVisibleSidebarConversationRow();
@@ -1013,13 +1081,13 @@
     const progressLabel = toolbar.querySelector('[data-role="library-progress-label"]');
     const footer = toolbar.querySelector('[data-role="library-footer"]');
     const showMore = toolbar.querySelector('[data-action="library-show-more"]');
-    const hasCore = Boolean(window.GPTBDLibrary?.fetchLibraryFiles && window.GPTBDLibrary?.deleteLibraryFile);
+    const hasCore = Boolean(globalThis.GPTBDLibrary?.fetchLibraryFiles && globalThis.GPTBDLibrary?.deleteLibraryFile);
     const coolingDown = isDeleteCoolingDown(library.accountKey || STATE.accountKey);
 
     if (syncLabel) syncLabel.textContent = library.syncing ? "Syncing…" : (library.files.length || library.lastError) ? "Resync Library" : "Sync Library";
     if (syncButton) {
       syncButton.disabled = busy || !hasCore;
-      syncButton.title = hasCore ? "Download your ChatGPT Library file list" : "Library API compatibility is unavailable";
+      syncButton.title = hasCore ? "Download your ChatGPT Library file list" : "Library module is unavailable. Reload the extension, then refresh ChatGPT.";
     }
     if (search) search.disabled = STATE.deleting;
     if (count) count.textContent = `${library.files.length.toLocaleString()} file${library.files.length === 1 ? "" : "s"}`;
@@ -1035,7 +1103,7 @@
         : library.lastError
           ? `${library.lastError} Use Resync Library to retry.`
         : !hasCore
-        ? "Library API unavailable. No files can be deleted."
+        ? "Library module is unavailable. Reload the extension, then refresh ChatGPT."
         : library.deleteApiAvailable === false
           ? "Library delete API unavailable. No files can be deleted."
           : library.deleteApiAvailable === null
@@ -1237,7 +1305,8 @@
       const response = await fetch(url, {
         credentials: "include",
         cache: "no-store",
-        redirect: "error",
+        redirect: "follow",
+        mode: "same-origin",
         referrerPolicy: "no-referrer",
         signal: controller.signal
       });
@@ -1265,7 +1334,9 @@
     if (typeof file?.thumbnailUrl !== "string" || !file.thumbnailUrl) return null;
     try {
       const url = new URL(file.thumbnailUrl, window.location.origin);
-      return url.origin === window.location.origin && url.pathname === LIBRARY_THUMBNAIL_PATH ? url.href : null;
+      const isThumbnailPath = url.pathname === LIBRARY_THUMBNAIL_PATH
+        || /^\/library\/files\/[A-Za-z0-9_-]+\/thumbnail$/.test(url.pathname);
+      return url.origin === window.location.origin && !url.username && !url.password && isThumbnailPath ? url.href : null;
     } catch (_) {
       return null;
     }
@@ -1319,8 +1390,8 @@
         visibleLimit: library.visibleLimit
       }
       : null;
-    if (!window.GPTBDLibrary?.fetchLibraryFiles) {
-      library.lastError = "Library sync is unavailable because ChatGPT's Library API could not be verified.";
+    if (!globalThis.GPTBDLibrary?.fetchLibraryFiles) {
+      library.lastError = "Library module is unavailable. Reload the extension, then refresh ChatGPT.";
       library.syncing = false;
       render();
       if (!automatic) showToast(`${library.lastError} Use Resync Library to retry.`);
@@ -2042,7 +2113,7 @@
   /* ─────────────────────────── DELETE FLOW ──────────────────────────────── */
   async function deleteSelectedConversations() {
     const ids = Array.from(STATE.selectedIds);
-    if (ids.length === 0 || STATE.deleting) return;
+    if (ids.length === 0 || STATE.deleting || STATE.library.deletePending) return;
 
     await ensureCapabilityHealth({ force: isCapabilityHealthStale(), silent: true });
     if (!STATE.health.deleteApiAvailable && !STATE.health.deleteUiAvailable) {
@@ -2366,18 +2437,29 @@
         registerCapabilityFailure("deleteApi", `Delete API returned ${response.status}.`);
         return false;
       }
-      const removed = await waitForConversationRemoval(id, 3000);
-      if (removed) {
-        registerCapabilitySuccess("deleteApi");
-        return true;
+      // An API mutation does not update ChatGPT's client-side sidebar state.
+      // Confirm with the response, then let onDeleted update our list/cache.
+      if (response.status !== 204) {
+        let timeoutId;
+        let payload;
+        try {
+          payload = await Promise.race([
+            response.json(),
+            new Promise((_, reject) => {
+              timeoutId = window.setTimeout(() => reject(new Error("Delete confirmation timed out")), 10000);
+            })
+          ]);
+        } catch (_) {
+          throw new GPTBDDelete.DeleteBatchPauseError("incompatible", "ChatGPT did not return a readable deletion confirmation. Resync to check the remaining chats.");
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+        if (payload?.success !== true) {
+          throw new GPTBDDelete.DeleteBatchPauseError("incompatible", "ChatGPT did not confirm deletion. Resync to check the remaining chats.");
+        }
       }
-      const row = document.querySelector(`[data-gptbd-conversation-id="${CSS.escape(id)}"]`);
-      if (row?.dataset.gptbdConversationSource === "project") {
-        registerCapabilitySuccess("deleteApi");
-        return true;
-      }
-      registerCapabilityFailure("deleteApi", "Delete API returned success but the conversation stayed visible.");
-      return false;
+      registerCapabilitySuccess("deleteApi");
+      return true;
     } catch (error) {
       if (error instanceof GPTBDDelete.DeleteBatchPauseError) throw error;
       registerCapabilityFailure("deleteApi", "Delete API request failed.");
@@ -2461,7 +2543,7 @@
 
   /* ──────────────────────────── SYNC ALL ────────────────────────────────── */
   async function syncAllChats() {
-    if (STATE.syncingAll || STATE.deleting) return;
+    if (STATE.syncingAll || STATE.deleting || STATE.library.deletePending) return;
     await ensureCapabilityHealth({ force: isCapabilityHealthStale(), silent: true });
     if (!STATE.health.syncAvailable) {
       showToast(STATE.health.note || "Sync is temporarily unavailable. Refresh ChatGPT and try again.");
@@ -3471,7 +3553,8 @@
   }
 
   function isLibraryRoute() {
-    return /^\/library(?:\/|$)/i.test(window.location.pathname || "");
+    return GPTBDLibraryUi?.isLibraryPath?.(window.location.pathname)
+      || /^\/(?:library|space\/files)(?:\/|$)/i.test(window.location.pathname || "");
   }
 
   async function setSkipDeleteWarningPreference(skip) {
@@ -3647,11 +3730,33 @@
     const projectMode = options.mode === "project";
     const header = document.createElement("div");
     header.className = `gptbd-results-header${projectMode ? " gptbd-results-header--project" : ""}`;
-    header.setAttribute("aria-hidden", "true");
 
-    const title = document.createElement("span");
+    const title = document.createElement("label");
     title.className = "gptbd-results-header__title";
-    title.textContent = projectMode ? "Project chat" : "Chat";
+    const selectAll = document.createElement("input");
+    selectAll.type = "checkbox";
+    selectAll.className = "gptbd-result-checkbox";
+    selectAll.dataset.role = "chat-select-all-checkbox";
+    const ids = getSelectableConversationIds();
+    const selectedCount = ids.filter(id => STATE.selectedIds.has(id)).length;
+    selectAll.checked = ids.length > 0 && selectedCount === ids.length;
+    selectAll.indeterminate = selectedCount > 0 && selectedCount < ids.length;
+    selectAll.disabled = STATE.deleting || STATE.syncingAll || STATE.library.deletePending
+      || ids.length === 0 || !canDeleteSelection(ids);
+    selectAll.setAttribute("aria-label", "Select all chats matching the current filters");
+    selectAll.title = "Select or clear all chats matching the current filters, including those beyond the displayed list";
+    selectAll.addEventListener("change", () => {
+      if (STATE.deleting || STATE.syncingAll || STATE.library.deletePending) return;
+      const currentIds = getSelectableConversationIds();
+      if (!canDeleteSelection(currentIds)) return;
+      const scrollTop = header.parentElement?.scrollTop || 0;
+      currentIds.forEach(id => selectAll.checked ? STATE.selectedIds.add(id) : STATE.selectedIds.delete(id));
+      STATE.lastSelectedId = null;
+      syncCheckboxes();
+      render();
+      restoreResultsPanelScroll(scrollTop);
+    });
+    title.append(selectAll, document.createTextNode(projectMode ? "Project chat" : "Chat"));
 
     const open = document.createElement("span");
     open.className = "gptbd-results-header__open";
