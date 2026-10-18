@@ -6,6 +6,9 @@
   const LIBRARY_NODES_PATH = "/backend-api/files/library/nodes";
   const DELETE_TIMEOUT_MS = 30 * 1000;
   const ID_MAX_LENGTH = 512;
+  // Opaque pagination tokens can be much longer than file IDs (1,331 observed).
+  // Keep a separate generous bound and pass the token back unchanged.
+  const CURSOR_MAX_LENGTH = 16 * 1024;
   const FILE_NAME_MAX_LENGTH = 1024;
 
   class LibraryResponseError extends Error {
@@ -107,7 +110,7 @@
       }
       return { type: "offset", value: payload.next_offset };
     }
-    if (!isSafeText(payload.next_cursor, ID_MAX_LENGTH, true)) {
+    if (!isSafeText(payload.next_cursor, CURSOR_MAX_LENGTH, true)) {
       throw new LibraryResponseError("Library sync failed: invalid next cursor.");
     }
     return { type: "cursor", value: payload.next_cursor };
@@ -122,7 +125,7 @@
       throw new LibraryResponseError("Library sync failed: missing or unsupported cursor pagination metadata.");
     }
     if (payload.cursor === null) return null;
-    if (!isSafeText(payload.cursor, ID_MAX_LENGTH, true)) {
+    if (!isSafeText(payload.cursor, CURSOR_MAX_LENGTH, true)) {
       throw new LibraryResponseError("Library sync failed: invalid cursor.");
     }
     return { type: "cursor", value: payload.cursor };

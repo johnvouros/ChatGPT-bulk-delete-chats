@@ -8,6 +8,12 @@ This project follows a simple semantic versioning approach:
 - `MINOR`: new features that stay backward-compatible
 - `PATCH`: fixes, polish, and safe maintenance updates
 
+## [1.2.3] - 2026-10-18
+
+- Fix Library sync failing with “invalid cursor” when ChatGPT returns longer pagination tokens
+- Keep pagination tokens intact across pages in both supported Library response formats
+- Retain session-only Library data, deletion confirmations, and existing rate-limit safeguards
+
 ## [1.2.2] - 2026-10-09
 
 - Increase chat, Library, and confirmation checkboxes to 18 px

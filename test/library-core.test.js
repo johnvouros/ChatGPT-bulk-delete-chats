@@ -139,6 +139,42 @@ test("parses observed items pages, skips directories, and follows the opaque cur
   assert.equal(result[0].mimeType, "text/csv");
 });
 
+test("follows long opaque cursors without truncating or changing them in either response format", async () => {
+  // Live ChatGPT returned a 1,331-character cursor; do not reuse file ID limits.
+  const cursor = "x".repeat(1319) + "+/=&?% tail ";
+  assert.equal(cursor.length, 1331);
+  for (const legacy of [false, true]) {
+    const requests = [];
+    const result = await fetchLibraryFiles({
+      accessToken: "token",
+      deleteApi,
+      delayImpl: async () => {},
+      fetchImpl: async url => {
+        requests.push(url);
+        const first = requests.length === 1;
+        assert.ok(requests.length <= 2, "sync must stop at the terminal page");
+        return jsonResponse(200, legacy
+          ? { nodes: [libraryFile(first ? "a" : "b")], has_more: first, next_cursor: first ? cursor : null }
+          : { items: [observedLibraryFile(first ? "a" : "b")], cursor: first ? cursor : null });
+      }
+    });
+    assert.equal(result.length, 2);
+    assert.deepEqual(requests, [
+      "/backend-api/files/library/nodes",
+      `/backend-api/files/library/nodes?cursor=${encodeURIComponent(cursor)}`
+    ]);
+  }
+});
+
+test("cursor validation still rejects malformed and excessive tokens in both formats", () => {
+  for (const cursor of ["", 123, {}, [], "bad\nvalue", "bad\u007fvalue", "x".repeat(16 * 1024 + 1)]) {
+    assert.throws(() => parseLibraryPage({ items: [], cursor }), /invalid cursor/);
+    assert.throws(() => parseLibraryPage({ nodes: [], has_more: true, next_cursor: cursor }), /invalid next cursor/);
+  }
+  const cursor = "x".repeat(16 * 1024);
+  assert.equal(parseLibraryPage({ items: [], cursor }).nextPage.value, cursor);
+});
+
 test("rejects unknown observed item kinds and a missing terminal cursor", () => {
   assert.throws(
     () => parseLibraryPage({ items: [{ kind: "collection", id: "x" }], cursor: null }),
