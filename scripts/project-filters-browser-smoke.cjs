@@ -8,6 +8,8 @@ const { chromium, firefox } = require(process.env.PLAYWRIGHT_MODULE || 'playwrig
 const root = path.resolve(__dirname, '..');
 const scripts = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8')).content_scripts[0].js;
 const projectId = 'g-p-0123456789abcdef0123456789abcdef';
+const emptyProjectId = 'g-p-11111111111111111111111111111111';
+const staleProjectId = 'g-p-22222222222222222222222222222222';
 const now = Date.now();
 const daysAgo = days => new Date(now - days * 24 * 60 * 60 * 1000).toISOString();
 
@@ -25,6 +27,12 @@ const daysAgo = days => new Date(now - days * 24 * 60 * 60 * 1000).toISOString()
         return route.fulfill({ contentType: 'text/html', body: `
           <html><body>
             <nav>
+              <div data-sidebar-project-container-id="chats">
+                <div role="list" aria-label="Recent chats">
+                  <div role="listitem"><a href="/c/personal-recent">Personal recent</a></div>
+                  <div role="listitem"><a href="/c/personal-old">Personal old</a></div>
+                </div>
+              </div>
               <div data-sidebar-project-container-id="project:${projectId}" data-sidebar-project-kind="local">
                 <div role="button" data-app-action-sidebar-project-row
                      data-app-action-sidebar-project-id="${projectId}"
@@ -35,6 +43,11 @@ const daysAgo = days => new Date(now - days * 24 * 60 * 60 * 1000).toISOString()
                     <div role="listitem"><a href="/g/${projectId}/c/project-dom-only">DOM-only project chat</a><button aria-label="Actions for DOM-only project chat">Actions</button></div>
                   </div>
                 </div>
+              </div>
+              <div data-sidebar-project-container-id="project:${emptyProjectId}" data-sidebar-project-kind="local">
+                <div role="button" data-app-action-sidebar-project-row
+                     data-app-action-sidebar-project-id="${emptyProjectId}"
+                     data-app-action-sidebar-project-label="Empty Project"></div>
               </div>
             </nav>
             <main>
@@ -59,7 +72,7 @@ const daysAgo = days => new Date(now - days * 24 * 60 * 60 * 1000).toISOString()
     });
 
     await page.goto('https://chatgpt.com/c/home');
-    await page.evaluate(({ fixedNow, projectId }) => {
+    await page.evaluate(({ fixedNow, projectId, staleProjectId }) => {
       Date.now = () => fixedNow;
       const stored = {};
       window.chrome = {
@@ -73,22 +86,39 @@ const daysAgo = days => new Date(now - days * 24 * 60 * 60 * 1000).toISOString()
       localStorage.setItem('gptbd-project-cache-v1', JSON.stringify({
         projects: [
           { key: `api:${projectId}`, name: 'Old API label', updatedAt: 1 },
-          { key: `path:${projectId}`, name: 'Old path label', updatedAt: 2 }
+          { key: `path:${projectId}`, name: 'Old path label', updatedAt: 2 },
+          { key: 'name:what should we work on?', name: 'What should we work on?', updatedAt: 3 },
+          { key: 'project:chats', name: 'Chats', updatedAt: 4 },
+          { key: `api:${staleProjectId}`, name: 'Stale project', updatedAt: 5 }
         ],
         memberships: {
           [`api:${projectId}`]: { name: 'Old API label', ids: ['legacy-a'], updatedAt: 1 },
-          [`path:${projectId}`]: { name: 'Old path label', ids: ['legacy-b'], updatedAt: 2 }
+          [`path:${projectId}`]: { name: 'Old path label', ids: ['legacy-b'], updatedAt: 2 },
+          'name:what should we work on?': { name: 'What should we work on?', ids: ['personal-recent'], updatedAt: 3 },
+          'project:chats': { name: 'Chats', ids: ['personal-old'], updatedAt: 4 },
+          [`api:${staleProjectId}`]: { name: 'Stale project', ids: ['stale-chat'], updatedAt: 5 }
         }
       }));
-    }, { fixedNow: now, projectId });
+      localStorage.setItem('gptbd-conversation-cache-v1', JSON.stringify({
+        conversations: [
+          { id: 'project-old', title: 'Project old', updateTime: new Date(fixedNow - 31 * 86400000).toISOString() },
+          { id: 'project-recent', title: 'Project recent', updateTime: new Date(fixedNow - 2 * 86400000).toISOString() },
+          { id: 'personal-old', title: 'Personal old', updateTime: new Date(fixedNow - 30 * 86400000).toISOString() },
+          { id: 'personal-recent', title: 'Personal recent', updateTime: new Date(fixedNow - 86400000).toISOString() }
+        ],
+        loadedAt: fixedNow
+      }));
+    }, { fixedNow: now, projectId, staleProjectId });
     await page.addStyleTag({ path: path.join(root, 'styles.css') });
     for (const script of scripts) await page.addScriptTag({ path: path.join(root, script) });
     await page.waitForFunction(() => document.getElementById('gpt-bulk-delete-root'));
     const migratedProjectCache = await page.evaluate(() => JSON.parse(localStorage.getItem('gptbd-project-cache-v1')));
-    assert.deepEqual(Object.keys(migratedProjectCache.memberships), [`project:${projectId}`],
+    assert.equal(Object.keys(migratedProjectCache.memberships).includes(`project:${projectId}`), true,
       'legacy API and path project keys must merge into the canonical project key');
-    assert.equal(migratedProjectCache.memberships[`project:${projectId}`].ids.includes('legacy-a'), true);
-    assert.equal(migratedProjectCache.memberships[`project:${projectId}`].ids.includes('legacy-b'), true);
+    assert.equal(Object.keys(migratedProjectCache.memberships).some(key => /what should|chats/.test(key)), false,
+      'obsolete non-project and recents memberships must be purged');
+    assert.equal(Object.keys(migratedProjectCache.memberships).includes(`project:${staleProjectId}`), true,
+      'valid historical project membership must remain stored until the user clears their cache');
 
     await page.locator('[data-action="sync-all"]').click();
     await page.waitForFunction(() => document.querySelector('[data-role="cache-count"]')?.textContent === '4 cached');
@@ -96,8 +126,13 @@ const daysAgo = days => new Date(now - days * 24 * 60 * 60 * 1000).toISOString()
     await page.waitForFunction(() => document.querySelectorAll('[data-role="chats-results"] .gptbd-result').length === 5);
 
     const projectSelect = page.locator('[data-action="select-project-filter"]');
-    assert.equal(await projectSelect.locator('option').allTextContents().then(items => items.includes('Correct Project Name')), true,
+    const projectOptions = await projectSelect.locator('option').allTextContents();
+    assert.equal(projectOptions.includes('Correct Project Name'), true,
       'the project label must come from ChatGPT’s project row, not its first chat or stale API metadata');
+    assert.equal(projectOptions.includes('Empty Project'), true,
+      'a valid visible project with no loaded chats must remain available as a filter');
+    assert.equal(projectOptions.some(label => /what should|^chats$|stale/i.test(label)), false,
+      'stale and non-project cache entries must not appear as project filters');
     const projectValue = await projectSelect.locator('option').evaluateAll(options => {
       const option = options.find(item => item.textContent === 'Correct Project Name');
       return option?.value || '';

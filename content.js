@@ -1849,8 +1849,22 @@
 
   function getKnownProjects() {
     return STATE.projectIndex.projects
-      .filter(project => project?.key && project?.name)
+      .filter(project => project?.key && project?.name && hasCurrentProjectEvidence(project.key))
       .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  }
+
+  function hasCurrentProjectEvidence(projectKey) {
+    if (!projectKey || isInvalidStoredProjectKey(projectKey)) return false;
+    if (getSidebarProjects().some(project => project.key === projectKey)) return true;
+    const pageContext = getPageContext();
+    if (pageContext.mode === "project" && pageContext.projectKey === projectKey) return true;
+    const membership = STATE.projectIndex.memberships[projectKey];
+    const cachedIds = new Set(STATE.cachedConversations.map(conversation => conversation.id));
+    return Array.isArray(membership?.ids) && membership.ids.some(id => cachedIds.has(id));
+  }
+
+  function isInvalidStoredProjectKey(key) {
+    return /^name:/i.test(key) || /^project:chats$/i.test(key);
   }
 
   function getProjectFilterLabel(projectKey) {
@@ -1893,8 +1907,12 @@
     return sidebarRoots.flatMap(root => Array.from(root.querySelectorAll('[data-sidebar-project-container-id]')))
       .map(container => {
         if (!(container instanceof HTMLElement)) return null;
-        const id = normalizeText(container.dataset.sidebarProjectContainerId).replace(/^project:/i, "");
-        const key = getProjectKey(/^g-p-/i.test(id) ? `/g/${id}` : `/projects/${id}`);
+        const containerId = normalizeText(container.dataset.sidebarProjectContainerId);
+        const id = containerId.replace(/^project:/i, "");
+        if (!/^project:g-p-[a-z0-9]{32}(?:[-/]|$)/i.test(containerId)) return null;
+        const row = container.querySelector(SELECTORS.projectRows);
+        if (!(row instanceof HTMLElement) || normalizeText(row.dataset.appActionSidebarProjectId).toLowerCase() !== id.toLowerCase()) return null;
+        const key = getProjectKey(`/g/${id}`);
         return key ? { key, container } : null;
       })
       .filter(Boolean)
@@ -3635,6 +3653,10 @@
         if (!key || ids.length === 0) return;
         const canonicalKey = canonicalProjectIndexKey(key);
         migrated ||= canonicalKey !== key;
+        if (isInvalidStoredProjectKey(canonicalKey)) {
+          migrated = true;
+          return;
+        }
         const existing = cleanMemberships[canonicalKey];
         cleanMemberships[canonicalKey] = {
           name: normalizeText(value?.name) || "Untitled project",
@@ -3648,6 +3670,10 @@
         if (!item?.key || !item?.name) return;
         const canonicalKey = canonicalProjectIndexKey(item.key);
         migrated ||= canonicalKey !== item.key;
+        if (isInvalidStoredProjectKey(canonicalKey)) {
+          migrated = true;
+          return;
+        }
         projectNames.set(canonicalKey, {
           name: normalizeText(item.name) || cleanMemberships[canonicalKey]?.name,
           updatedAt: Number(item.updatedAt) || cleanMemberships[canonicalKey]?.updatedAt || 0
@@ -4121,8 +4147,9 @@
   }
 
   function getKnownProjectConversationIds() {
-    return new Set(Object.values(STATE.projectIndex.memberships)
-      .flatMap(membership => Array.isArray(membership?.ids) ? membership.ids : []));
+    return new Set(Object.entries(STATE.projectIndex.memberships)
+      .filter(([key]) => hasCurrentProjectEvidence(key))
+      .flatMap(([, membership]) => Array.isArray(membership?.ids) ? membership.ids : []));
   }
 
   function matchesAgeFilters(conversation, now = Date.now()) {

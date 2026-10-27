@@ -13,6 +13,7 @@ This project follows a simple semantic versioning approach:
 - Fix project names being replaced by chat titles and reconcile project identifiers used by sidebar links and synced chats (issue #10)
 - Support project discovery from ChatGPT's newer sidebar buttons
 - Migrate existing project-cache identifiers and include loaded project chats missing from the synced list
+- Exclude ChatGPT's Recents group from project discovery, remove invalid remembered associations, and hide stale project options without current chats
 - Add older-than and newer-than day filters based on chat activity dates
 - Add project-only and non-project chat filters with explicit handling of incomplete project information
 - Remove selections that no longer match after changing a chat filter
