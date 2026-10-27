@@ -981,6 +981,7 @@
     }
     if (toggleResultsBtn) {
       toggleResultsBtn.hidden = false;
+      toggleResultsBtn.setAttribute("aria-expanded", String(!STATE.resultsCollapsed));
       toggleResultsBtn.disabled = busy || (projectMode ? selectableCount === 0 : !showingCachedResults);
       toggleResultsBtn.textContent = projectMode
         ? STATE.resultsCollapsed ? "Show project list" : "Hide project list"
