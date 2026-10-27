@@ -1,6 +1,6 @@
 # ChatGPT Bulk Delete
 
-![Version](https://img.shields.io/badge/version-1.2.3-3b82f6)
+![Version](https://img.shields.io/badge/version-1.3.0-3b82f6)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-10b981)
 ![ChatGPT](https://img.shields.io/badge/Works%20on-chatgpt.com-111827)
 ![Firefox](https://img.shields.io/badge/Firefox-Compatible-f97316)
@@ -29,7 +29,7 @@ Firefox: [Install from Firefox Add-ons](https://addons.mozilla.org/en-GB/firefox
 
 - Syncs your ChatGPT chat list into a local cache
 - Lets you search by keyword or exact words
-- Filters synced chats by year and loaded Project chat membership
+- Filters chats by year, last activity older/newer than a chosen number of days, and project membership
 - Opens any result in a new tab before you delete it
 - Bulk deletes selected chats with a confirmation warning
 - Provides a separate Library mode to sync, search, select, and bulk-delete files
@@ -75,10 +75,16 @@ Note: Firefox temporary add-ons are removed when the browser restarts unless you
 
 1. Open ChatGPT.
 2. Click `Sync all`.
-3. Search by keyword, exact words, or year.
+3. Search by keyword or exact words, and narrow the list by year, age, or project membership.
 4. Open a result in a new tab if you want to verify it first.
 5. Select the chats you want.
 6. Click `Delete`.
+
+### Chat filters
+
+Combine keyword search and year filters with `Older than` and `Newer than` day counts. Age is based on the chat's last activity, not just when it was created. Leave a day field empty to disable that limit. Chats without a usable date do not match an active age filter.
+
+Use the project controls to select a specific project or show only project chats or chats with no known project. Project membership comes from ChatGPT's sync response and loaded project lists. Open or expand your projects and load their chats when membership information is missing; an undiscovered project chat cannot reliably be classified as a non-project chat. The toolbar explains incomplete membership information.
 
 ### Library files
 
@@ -94,7 +100,9 @@ Library support uses undocumented ChatGPT endpoints. The current `items`/`cursor
 
 A failed initial sync clears partial results; a failed resync restores the previous complete list. Clear session and failed syncs do not trigger repeated automatic retries; use Resync Library when ready.
 
-Development checks: run `npm test`. The optional browser smoke test runs with `node scripts/library-browser-smoke.cjs` when Playwright and Chromium are available (`PLAYWRIGHT_MODULE` can point to an existing installation). Run `node scripts/library-auto-sync-smoke.cjs` for automatic/progressive sync coverage. All browser requests are intercepted and use mock data.
+Development checks: run `npm test`. The optional browser smoke test runs with `node scripts/library-browser-smoke.cjs` when Playwright and Chromium are available (`PLAYWRIGHT_MODULE` can point to an existing installation). Run `node scripts/library-auto-sync-smoke.cjs` for automatic/progressive sync coverage and `node scripts/project-filters-browser-smoke.cjs` for project discovery, age filters, and selection coverage. All browser requests are intercepted and use mock data.
+
+Run the project/filter smoke test in Firefox with `PLAYWRIGHT_BROWSER=firefox node scripts/project-filters-browser-smoke.cjs` after installing Playwright's Firefox browser. No real chats or files are deleted by these tests.
 
 ## Privacy
 

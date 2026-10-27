@@ -831,6 +831,54 @@
   padding: 0;
 }
 
+.gptbd-age-filters {
+  display: flex;
+  gap: 6px;
+}
+
+.gptbd-age-filter {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: #a1a1aa;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.gptbd-age-input {
+  width: 46px;
+  height: 25px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #e4e4e8;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 9px;
+  color-scheme: dark;
+}
+
+.gptbd-age-input::placeholder { color: #71717a; }
+.gptbd-age-input:focus-visible {
+  outline: 2px solid rgba(16, 163, 127, 0.60);
+  outline-offset: 2px;
+}
+
+.gptbd-project-relation-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gptbd-filter-hint {
+  max-width: 205px;
+  color: #71717a;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
 .gptbd-year-chip {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 999px;

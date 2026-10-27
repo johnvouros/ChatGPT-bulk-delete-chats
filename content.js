@@ -9,6 +9,9 @@
     exactSearch: false,
     selectedYear: "all",
     selectedProjectKey: "all",
+    olderThanDays: "",
+    newerThanDays: "",
+    projectRelation: "all",
     resultScope: "auto",
     cachedSortOrder: "newest",
     resultsCollapsed: true,
@@ -102,17 +105,12 @@
       '[data-href*="/c/"]'
     ].join(", "),
     sidebarRoots: ["nav", "aside", '[data-testid="history"]'].join(", "),
-    projectSignals: [
-      '[data-testid*="project" i]',
-      '[aria-label*="project" i]',
-      '[href*="/project"]',
-      '[href*="/projects"]'
-    ].join(", "),
     projectLinks: [
       'a[href*="/project" i]',
       'a[href*="/projects" i]',
       'a[href*="/g/g-p-" i]'
     ].join(", "),
+    projectRows: '[data-app-action-sidebar-project-row][data-app-action-sidebar-project-id]',
     messageRoots: [
       "article",
       '[data-testid*="conversation-turn" i]',
@@ -586,6 +584,7 @@
       if (action === "toggle-exact") {
         STATE.exactSearch = !STATE.exactSearch;
         refreshConversationRows();
+        pruneSelectionToCurrentResults();
         render();
         return;
       }
@@ -595,6 +594,7 @@
         const searchInput = root.querySelector('[data-role="search"]');
         if (searchInput) searchInput.value = "";
         refreshConversationRows();
+        pruneSelectionToCurrentResults();
         render();
         return;
       }
@@ -633,6 +633,7 @@
 
       if (action === "filter-year") {
         STATE.selectedYear = el.dataset.year || "all";
+        pruneSelectionToCurrentResults();
         render();
         return;
       }
@@ -686,6 +687,7 @@
       STATE.searchTerm = normalizeSearchTerm(event.target.value);
       if (STATE.searchTerm) STATE.resultsCollapsed = false;
       refreshConversationRows();
+      pruneSelectionToCurrentResults();
       render();
     });
 
@@ -715,6 +717,27 @@
       STATE.lastSelectedId = null;
       STATE.resultsCollapsed = false;
       refreshConversationRows();
+      render();
+    });
+
+    root.addEventListener("change", event => {
+      const ageInput = event.target.closest('[data-action="filter-age"]');
+      if (ageInput) {
+        const value = normalizeDayCount(ageInput.value);
+        if (ageInput.dataset.age === "older") STATE.olderThanDays = value;
+        if (ageInput.dataset.age === "newer") STATE.newerThanDays = value;
+        STATE.resultsCollapsed = false;
+        pruneSelectionToCurrentResults();
+        render();
+        return;
+      }
+      const projectRelationSelect = event.target.closest('[data-action="filter-project-relation"]');
+      if (!projectRelationSelect) return;
+      STATE.projectRelation = ["all", "project", "none"].includes(projectRelationSelect.value)
+        ? projectRelationSelect.value
+        : "all";
+      STATE.resultsCollapsed = false;
+      pruneSelectionToCurrentResults();
       render();
     });
 
@@ -886,22 +909,27 @@
       const hasSearch = Boolean(STATE.searchTerm);
       const hasYearFilter = STATE.selectedYear !== "all";
       const hasProjectFilter = !projectMode && STATE.selectedProjectKey !== "all";
+      const hasAgeFilter = Boolean(STATE.olderThanDays || STATE.newerThanDays);
+      const hasProjectRelationFilter = STATE.projectRelation !== "all";
       if (projectMode) {
         matchCountEl.textContent = hasSearch
           ? `${matchCount} project match${matchCount === 1 ? "" : "es"}`
           : `${matchCount} project chat${matchCount === 1 ? "" : "s"} shown`;
-      } else if (hasSearch || hasYearFilter || hasProjectFilter) {
+      } else if (hasSearch || hasYearFilter || hasProjectFilter || hasAgeFilter || hasProjectRelationFilter) {
         const parts = [`${matchCount} match${matchCount === 1 ? "" : "es"}`];
         if (hasYearFilter) parts.push(`year ${STATE.selectedYear}`);
         if (hasProjectFilter) parts.push(getProjectFilterLabel(STATE.selectedProjectKey));
+        if (STATE.olderThanDays) parts.push(`older than ${STATE.olderThanDays} days`);
+        if (STATE.newerThanDays) parts.push(`newer than ${STATE.newerThanDays} days`);
+        if (hasProjectRelationFilter) parts.push(STATE.projectRelation === "project" ? "project chats" : "no known project");
         matchCountEl.textContent = parts.join(" in ");
       } else {
         matchCountEl.textContent = "";
       }
-      matchCountEl.hidden = !(projectMode || hasSearch || hasYearFilter || hasProjectFilter);
+      matchCountEl.hidden = !(projectMode || hasSearch || hasYearFilter || hasProjectFilter || hasAgeFilter || hasProjectRelationFilter);
     }
     if (matchMetaDotEl) {
-      matchMetaDotEl.hidden = !(projectMode || STATE.searchTerm || STATE.selectedYear !== "all" || STATE.selectedProjectKey !== "all");
+      matchMetaDotEl.hidden = !(projectMode || STATE.searchTerm || STATE.selectedYear !== "all" || STATE.selectedProjectKey !== "all" || STATE.olderThanDays || STATE.newerThanDays || STATE.projectRelation !== "all");
     }
 
     const healthNoteEl = toolbar.querySelector('[data-role="health-note"]');
@@ -1653,8 +1681,17 @@
   }
 
   function getProjectConversationLinks() {
-    return Array.from(document.querySelectorAll(SELECTORS.conversationLinks))
+    const mainLinks = Array.from(document.querySelectorAll(SELECTORS.conversationLinks))
       .filter(link => isProjectConversationLink(link));
+    const sidebarLinks = getSidebarProjectConversationLinks(getPageContext().projectKey);
+    return Array.from(new Set([...mainLinks, ...sidebarLinks]));
+  }
+
+  function getSidebarProjectConversationLinks(projectKey) {
+    if (!projectKey) return [];
+    return getSidebarProjectContainers()
+      .filter(({ key }) => key === projectKey)
+      .flatMap(({ container }) => Array.from(container.querySelectorAll(SELECTORS.conversationLinks)));
   }
 
   function buildConversationRowItems(links, source) {
@@ -1715,18 +1752,17 @@
 
   function getPageContext() {
     const path = window.location.pathname.toLowerCase();
-    const main = document.querySelector("main");
     const isProjectUrl =
       /^\/projects?(\/|$)/.test(path) ||
       /\/projects?(\/|$)/.test(path) ||
       /\/g\/g-p-[^/]+/.test(path);
-    const hasProjectDomSignal = Array.from(main?.querySelectorAll(SELECTORS.projectSignals) || [])
-      .some(el => !el.closest(SELECTORS.messageRoots));
     const projectName = getProjectName();
     const projectKey = getProjectKey(path, projectName);
 
     return {
-      mode: isProjectUrl || hasProjectDomSignal ? "project" : "default",
+      // The route is a stable signal. Broad DOM matching also catches the normal
+      // composer’s "Choose project" control and incorrectly switches scope.
+      mode: isProjectUrl ? "project" : "default",
       projectName,
       projectKey
     };
@@ -1738,10 +1774,17 @@
   }
 
   function getProjectName() {
+    const projectKey = getProjectKey(window.location.pathname);
+    const sidebarProject = getSidebarProjects().find(project => project.key === projectKey);
+    if (sidebarProject?.name) return sidebarProject.name;
+
+    // ChatGPT keeps prior pages mounted in the DOM. Only use a visible heading
+    // outside conversation content as a fallback, never the first mounted h1.
     const heading = Array.from(document.querySelectorAll("main h1, main [role='heading']"))
-      .map(el => normalizeText(el.textContent))
-      .find(Boolean);
-    return heading || "";
+      .find(el => isElementVisible(el)
+        && !el.closest(SELECTORS.messageRoots)
+        && !el.closest(SELECTORS.conversationLinks));
+    return normalizeText(heading?.textContent);
   }
 
   function getSelectionContext(ids = Array.from(STATE.selectedIds)) {
@@ -1758,9 +1801,11 @@
 
   function getProjectKey(path = window.location.pathname.toLowerCase(), projectName = "") {
     const normalizedPath = normalizeText(path).toLowerCase();
+    const gProjectMatch = normalizedPath.match(/\/g\/(g-p-[a-z0-9]{32})(?:[-/]|$)/);
+    if (gProjectMatch?.[1]) return `project:${gProjectMatch[1]}`;
     const slugMatch = normalizedPath.match(/\/projects?\/([^/?#]+)/)
       || normalizedPath.match(/\/g\/(g-p-[^/?#]+)/);
-    if (slugMatch?.[1]) return `path:${decodeURIComponent(slugMatch[1])}`;
+    if (slugMatch?.[1]) return `project:${decodeURIComponent(slugMatch[1])}`;
     const name = normalizeText(projectName).toLowerCase();
     if (name) return `name:${name}`;
     return "";
@@ -1804,8 +1849,22 @@
 
   function getKnownProjects() {
     return STATE.projectIndex.projects
-      .filter(project => project?.key && project?.name)
+      .filter(project => project?.key && project?.name && hasCurrentProjectEvidence(project.key))
       .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  }
+
+  function hasCurrentProjectEvidence(projectKey) {
+    if (!projectKey || isInvalidStoredProjectKey(projectKey)) return false;
+    if (getSidebarProjects().some(project => project.key === projectKey)) return true;
+    const pageContext = getPageContext();
+    if (pageContext.mode === "project" && pageContext.projectKey === projectKey) return true;
+    const membership = STATE.projectIndex.memberships[projectKey];
+    const cachedIds = new Set(STATE.cachedConversations.map(conversation => conversation.id));
+    return Array.isArray(membership?.ids) && membership.ids.some(id => cachedIds.has(id));
+  }
+
+  function isInvalidStoredProjectKey(key) {
+    return /^name:/i.test(key) || /^project:chats$/i.test(key);
   }
 
   function getProjectFilterLabel(projectKey) {
@@ -1840,24 +1899,80 @@
     });
 
     if (changed) persistProjectIndex();
+    rememberSidebarProjectMemberships();
+  }
+
+  function getSidebarProjectContainers() {
+    const sidebarRoots = Array.from(document.querySelectorAll(SELECTORS.sidebarRoots));
+    return sidebarRoots.flatMap(root => Array.from(root.querySelectorAll('[data-sidebar-project-container-id]')))
+      .map(container => {
+        if (!(container instanceof HTMLElement)) return null;
+        const containerId = normalizeText(container.dataset.sidebarProjectContainerId);
+        const id = containerId.replace(/^project:/i, "");
+        if (!/^project:g-p-[a-z0-9]{32}(?:[-/]|$)/i.test(containerId)) return null;
+        const row = container.querySelector(SELECTORS.projectRows);
+        if (!(row instanceof HTMLElement) || normalizeText(row.dataset.appActionSidebarProjectId).toLowerCase() !== id.toLowerCase()) return null;
+        const key = getProjectKey(`/g/${id}`);
+        return key ? { key, container } : null;
+      })
+      .filter(Boolean)
+      .filter((item, index, items) => items.findIndex(other => other.container === item.container) === index);
+  }
+
+  function rememberSidebarProjectMemberships() {
+    getSidebarProjectContainers().forEach(({ key, container }) => {
+      const project = getSidebarProjects().find(item => item.key === key);
+      const ids = buildConversationRowItems(
+        Array.from(container.querySelectorAll(SELECTORS.conversationLinks)),
+        "project"
+      ).map(item => item.id);
+      if (ids.length === 0) return;
+      const existing = STATE.projectIndex.memberships[key] || {};
+      const mergedIds = Array.from(new Set([...(existing.ids || []), ...ids]));
+      const name = project?.name || existing.name || "Untitled project";
+      const sameIds = Array.isArray(existing.ids)
+        && existing.ids.length === mergedIds.length
+        && existing.ids.every(id => mergedIds.includes(id));
+      const sameName = existing.name === name;
+      if (sameIds && sameName) return;
+      STATE.projectIndex.memberships[key] = { name, ids: mergedIds, updatedAt: Date.now() };
+      STATE.projectIndex.projects = upsertProjectSummary(STATE.projectIndex.projects, {
+        key, name, updatedAt: Date.now()
+      });
+      persistProjectIndex();
+    });
   }
 
   function getSidebarProjects() {
     const sidebarRoots = Array.from(document.querySelectorAll(SELECTORS.sidebarRoots));
+    const explicitRows = sidebarRoots.flatMap(root => Array.from(root.querySelectorAll(SELECTORS.projectRows)))
+      .map(row => {
+        if (!(row instanceof HTMLElement)) return null;
+        const id = normalizeText(row.dataset.appActionSidebarProjectId);
+        const name = normalizeText(row.dataset.appActionSidebarProjectLabel);
+        const key = getProjectKey(`/g/${id}`);
+        return id && name && key ? { key, name, updatedAt: Date.now() } : null;
+      });
     const links = sidebarRoots.flatMap(root => Array.from(root.querySelectorAll(SELECTORS.projectLinks)));
-    return links
+    const legacyLinks = links
       .map(link => {
         if (!(link instanceof HTMLElement) || !isElementVisible(link)) return null;
         const href = link.getAttribute("href") || "";
-        const name = normalizeText(link.textContent);
-        if (!href || !name) return null;
         const path = toPathname(href);
+        if (!isProjectNavigationPath(path)) return null;
+        const name = normalizeText(link.getAttribute("aria-label") || link.getAttribute("title") || link.textContent);
         const key = getProjectKey(path, name);
-        if (!key) return null;
-        return { key, name, updatedAt: Date.now() };
-      })
+        return key && name ? { key, name, updatedAt: Date.now() } : null;
+      });
+    return [...explicitRows, ...legacyLinks]
       .filter(Boolean)
       .filter((project, index, arr) => arr.findIndex(other => other.key === project.key) === index);
+  }
+
+  function isProjectNavigationPath(path) {
+    const normalizedPath = normalizeText(path).toLowerCase();
+    return /^\/projects?\/[^/?#]+\/?$/.test(normalizedPath)
+      || /^\/g\/g-p-[^/?#]+(?:\/project)?\/?$/.test(normalizedPath);
   }
 
   function toPathname(href) {
@@ -2011,6 +2126,17 @@
     syncCheckboxes();
   }
 
+  function pruneSelectionToCurrentResults() {
+    const allowedIds = new Set(getSelectableConversationIds());
+    STATE.selectedIds.forEach(id => {
+      if (!allowedIds.has(id)) STATE.selectedIds.delete(id);
+    });
+    if (STATE.lastSelectedId && !STATE.selectedIds.has(STATE.lastSelectedId)) {
+      STATE.lastSelectedId = null;
+    }
+    syncCheckboxes();
+  }
+
   function selectMatchingRows() {
     getSearchResults().forEach(({ id }) => STATE.selectedIds.add(id));
     syncCheckboxes();
@@ -2087,7 +2213,7 @@
       }));
     }
     if (STATE.cachedConversations.length > 0) {
-      return sortCachedResults(filterCachedResults(STATE.cachedConversations));
+      return sortCachedResults(filterCachedResults(getFilterableCachedConversations()));
     }
     return getMatchingRows().map(({ id, link, row }) => ({
       id,
@@ -2664,6 +2790,7 @@
     const projectObject = [item?.project, item?.project_info, item?.current_project]
       .find(value => value && typeof value === "object");
     const id = firstString(
+      typeof item?.gizmo_id === "string" && /^g-p-/i.test(item.gizmo_id) ? item.gizmo_id : "",
       item?.project_id,
       item?.project_uuid,
       item?.current_project_id,
@@ -2678,7 +2805,9 @@
       projectObject?.title
     );
     if (!id && !name) return null;
-    const key = id ? `api:${id}` : `name:${normalizeText(name).toLowerCase()}`;
+    const key = id
+      ? getProjectKey(/^g-p-/i.test(id) ? `/g/${id}` : `/projects/${id}`)
+      : `name:${normalizeText(name).toLowerCase()}`;
     return {
       key,
       name: normalizeText(name) || `Project ${String(id).slice(0, 8)}`
@@ -2694,25 +2823,27 @@
     if (!(projectMemberships instanceof Map) || projectMemberships.size === 0) return;
     let changed = false;
     projectMemberships.forEach(project => {
+      const sidebarName = getSidebarProjects().find(item => item.key === project.key)?.name;
+      const name = sidebarName || project.name;
       const existing = STATE.projectIndex.memberships[project.key] || {};
       const mergedIds = Array.from(new Set([...(existing.ids || []), ...project.ids]));
       const sameIds = Array.isArray(existing.ids)
         && existing.ids.length === mergedIds.length
         && existing.ids.every(id => mergedIds.includes(id));
-      const sameName = existing.name === project.name;
+      const sameName = existing.name === name;
       if (!sameIds || !sameName) {
         STATE.projectIndex.memberships[project.key] = {
-          name: project.name,
+          name,
           ids: mergedIds,
           updatedAt: Date.now()
         };
         changed = true;
       }
       const existingSummary = STATE.projectIndex.projects.find(item => item.key === project.key);
-      if (!existingSummary || existingSummary.name !== project.name) {
+      if (!existingSummary || existingSummary.name !== name) {
         STATE.projectIndex.projects = upsertProjectSummary(STATE.projectIndex.projects, {
           key: project.key,
-          name: project.name,
+          name,
           updatedAt: Date.now()
         });
         changed = true;
@@ -2725,7 +2856,7 @@
   function renderResultsPanel(panel) {
     if (!panel) return;
     if (getEffectiveResultScope() === "project") {
-      const shouldShowProjectList = !STATE.resultsCollapsed && (STATE.enabled || Boolean(STATE.searchTerm));
+      const shouldShowProjectList = !STATE.resultsCollapsed;
       panel.dataset.visible = String(shouldShowProjectList);
       if (!shouldShowProjectList) {
         replaceChildren(panel, []);
@@ -2845,12 +2976,68 @@
     }
     if (showingCachedResults) {
       nodes.push(...buildYearFilters(getAvailableYears()));
+      nodes.push(buildAgeFilterControls());
+      nodes.push(buildProjectRelationSelect());
       const knownProjects = getKnownProjects();
       if (knownProjects.length > 0) {
         nodes.push(buildProjectFilterSelect(knownProjects));
       }
     }
     return nodes;
+  }
+
+  function buildAgeFilterControls() {
+    const wrap = document.createElement("div");
+    wrap.className = "gptbd-age-filters";
+    wrap.setAttribute("role", "group");
+    wrap.setAttribute("aria-label", "Filter cached chats by age in days");
+    [["older", "Older than", STATE.olderThanDays], ["newer", "Newer than", STATE.newerThanDays]]
+      .forEach(([age, label, value]) => {
+        const field = document.createElement("label");
+        field.className = "gptbd-age-filter";
+        field.append(document.createTextNode(`${label} `));
+        const input = document.createElement("input");
+        input.type = "number";
+        input.min = "0";
+        input.step = "1";
+        input.inputMode = "numeric";
+        input.className = "gptbd-age-input";
+        input.dataset.action = "filter-age";
+        input.dataset.age = age;
+        input.setAttribute("aria-label", `${label} days`);
+        input.title = `${label} days. Uses the chat's last activity date.`;
+        input.value = value;
+        field.append(input, document.createTextNode(" days"));
+        wrap.appendChild(field);
+      });
+    return wrap;
+  }
+
+  function buildProjectRelationSelect() {
+    const wrap = document.createElement("div");
+    wrap.className = "gptbd-project-relation-filter";
+    const select = document.createElement("select");
+    select.className = "gptbd-filter-select gptbd-project-select";
+    select.dataset.action = "filter-project-relation";
+    select.dataset.active = String(STATE.projectRelation !== "all");
+    select.title = "Filter chats by whether they have been found in a loaded project";
+    select.setAttribute("aria-label", "Filter by project relationship");
+    [["all", "All chats"], ["project", "Project chats"], ["none", "No known project"]]
+      .forEach(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        select.appendChild(option);
+      });
+    select.value = STATE.projectRelation;
+    wrap.appendChild(select);
+    if (STATE.projectRelation !== "all") {
+      const hint = document.createElement("span");
+      hint.className = "gptbd-filter-hint";
+      hint.textContent = "Based on loaded project chats. Open or expand projects to include more.";
+      wrap.appendChild(hint);
+    }
+    return wrap;
   }
 
   function buildScopeSelect(pageContext, activeScope, hasCache) {
@@ -2891,7 +3078,7 @@
 
     const allOption = document.createElement("option");
     allOption.value = "all";
-    allOption.textContent = "All Chats";
+    allOption.textContent = "Any project";
     select.appendChild(allOption);
 
     projects.forEach(project => {
@@ -3460,30 +3647,61 @@
         : {};
 
       const cleanMemberships = {};
+      let migrated = false;
       Object.entries(memberships).forEach(([key, value]) => {
         const ids = Array.isArray(value?.ids) ? value.ids.filter(Boolean) : [];
         if (!key || ids.length === 0) return;
-        cleanMemberships[key] = {
+        const canonicalKey = canonicalProjectIndexKey(key);
+        migrated ||= canonicalKey !== key;
+        if (isInvalidStoredProjectKey(canonicalKey)) {
+          migrated = true;
+          return;
+        }
+        const existing = cleanMemberships[canonicalKey];
+        cleanMemberships[canonicalKey] = {
           name: normalizeText(value?.name) || "Untitled project",
-          ids: Array.from(new Set(ids)),
-          updatedAt: Number(value?.updatedAt) || 0
+          ids: Array.from(new Set([...(existing?.ids || []), ...ids])),
+          updatedAt: Math.max(Number(existing?.updatedAt) || 0, Number(value?.updatedAt) || 0)
         };
       });
 
+      const projectNames = new Map();
+      projects.forEach(item => {
+        if (!item?.key || !item?.name) return;
+        const canonicalKey = canonicalProjectIndexKey(item.key);
+        migrated ||= canonicalKey !== item.key;
+        if (isInvalidStoredProjectKey(canonicalKey)) {
+          migrated = true;
+          return;
+        }
+        projectNames.set(canonicalKey, {
+          name: normalizeText(item.name) || cleanMemberships[canonicalKey]?.name,
+          updatedAt: Number(item.updatedAt) || cleanMemberships[canonicalKey]?.updatedAt || 0
+        });
+      });
+
       STATE.projectIndex = {
-        projects: projects
-          .filter(item => item?.key && item?.name && cleanMemberships[item.key])
-          .map(item => ({
-            key: item.key,
-            name: normalizeText(item.name) || cleanMemberships[item.key].name,
-            updatedAt: Number(item.updatedAt) || cleanMemberships[item.key].updatedAt || 0
+        projects: Object.keys(cleanMemberships)
+          .map(key => ({
+            key,
+            name: projectNames.get(key)?.name || cleanMemberships[key].name,
+            updatedAt: projectNames.get(key)?.updatedAt || cleanMemberships[key].updatedAt || 0
           }))
           .sort((a, b) => String(a.name).localeCompare(String(b.name))),
         memberships: cleanMemberships
       };
+      if (migrated) persistProjectIndex();
     } catch (_) {
       STATE.projectIndex = { projects: [], memberships: {} };
     }
+  }
+
+  function canonicalProjectIndexKey(key) {
+    const value = normalizeText(key);
+    const legacyMatch = value.match(/^(?:path|api):(.+)$/i);
+    if (!legacyMatch?.[1]) return value;
+    const id = legacyMatch[1];
+    return getProjectKey(/^g-p-/i.test(id) ? `/g/${id}` : `/projects/${id}`) || value;
   }
 
   function removeConversationFromProjectIndex(id) {
@@ -3864,15 +4082,56 @@
     return normalizeText(value).toLowerCase();
   }
 
+  function normalizeDayCount(value) {
+    if (value == null || String(value).trim() === "") return "";
+    const days = Number(value);
+    if (!Number.isFinite(days) || days < 0) return "";
+    return String(Math.floor(days));
+  }
+
+  function getFilterableCachedConversations() {
+    const conversationsById = new Map(STATE.cachedConversations.map(conversation => [conversation.id, conversation]));
+    const selectedKey = STATE.selectedProjectKey === "all" ? null : STATE.selectedProjectKey;
+    getLoadedProjectConversationRecords(selectedKey).forEach(conversation => {
+      if (!conversationsById.has(conversation.id)) conversationsById.set(conversation.id, conversation);
+    });
+    return Array.from(conversationsById.values());
+  }
+
+  function getLoadedProjectConversationRecords(projectKey = null) {
+    const sidebarRows = projectKey
+      ? buildConversationRowItems(getSidebarProjectConversationLinks(projectKey), "project")
+      : getSidebarProjectContainers().flatMap(({ container }) => buildConversationRowItems(
+        Array.from(container.querySelectorAll(SELECTORS.conversationLinks)), "project"
+      ));
+    const pageContext = getPageContext();
+    const mainRows = pageContext.mode === "project" && (!projectKey || pageContext.projectKey === projectKey)
+      ? buildConversationRowItems(
+        Array.from(document.querySelectorAll(SELECTORS.conversationLinks)).filter(isProjectConversationLink),
+        "project"
+      )
+      : [];
+    return uniqueConversationRows([...sidebarRows, ...mainRows]).map(({ id, link, row }) => ({
+      id,
+      title: getConversationTitle(link, row) || "Untitled chat",
+      updateTime: null
+    }));
+  }
+
   function filterCachedResults(results) {
     const projectMembership = getSelectedProjectMembership();
+    const knownProjectIds = getKnownProjectConversationIds();
+    const now = Date.now();
     return results.filter(conversation => {
       if (projectMembership && !projectMembership.has(conversation.id)) {
         return false;
       }
+      if (STATE.projectRelation === "project" && !knownProjectIds.has(conversation.id)) return false;
+      if (STATE.projectRelation === "none" && knownProjectIds.has(conversation.id)) return false;
       if (STATE.selectedYear !== "all" && getConversationYear(conversation) !== String(STATE.selectedYear)) {
         return false;
       }
+      if (!matchesAgeFilters(conversation, now)) return false;
       if (STATE.searchTerm && !matchesSearch(conversation.title, STATE.searchTerm)) {
         return false;
       }
@@ -3885,6 +4144,22 @@
     const membership = STATE.projectIndex.memberships[STATE.selectedProjectKey];
     if (!Array.isArray(membership?.ids)) return new Set();
     return new Set(membership.ids);
+  }
+
+  function getKnownProjectConversationIds() {
+    return new Set(Object.entries(STATE.projectIndex.memberships)
+      .filter(([key]) => hasCurrentProjectEvidence(key))
+      .flatMap(([, membership]) => Array.isArray(membership?.ids) ? membership.ids : []));
+  }
+
+  function matchesAgeFilters(conversation, now = Date.now()) {
+    const timestamp = getConversationTimestamp(conversation);
+    if (!STATE.olderThanDays && !STATE.newerThanDays) return true;
+    if (!timestamp) return false;
+    const ageMs = now - timestamp;
+    if (STATE.olderThanDays && ageMs <= Number(STATE.olderThanDays) * 24 * 60 * 60 * 1000) return false;
+    if (STATE.newerThanDays && ageMs >= Number(STATE.newerThanDays) * 24 * 60 * 60 * 1000) return false;
+    return true;
   }
 
   function getAvailableYears() {
