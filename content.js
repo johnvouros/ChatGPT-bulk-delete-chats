@@ -24,6 +24,7 @@
     projectIndex: { projects: [], memberships: {} },
     cacheLoadedAt: null,
     skipDeleteWarning: false,
+    skipLibraryDeleteWarning: false,
     uiHidden: false,
     reviewSessionCount: 0,
     reviewPromptHidden: false,
@@ -62,6 +63,7 @@
   const UI_HIDDEN_KEY = "gptbd-ui-hidden";
   const TOOLBAR_MODE_KEY = "gptbd-toolbar-mode";
   const SKIP_DELETE_WARNING_KEY = "gptbd-skip-delete-warning";
+  const SKIP_LIBRARY_DELETE_WARNING_KEY = "gptbd-skip-library-delete-warning";
   const REVIEW_SESSION_COUNT_KEY = "gptbd-review-session-count";
   const REVIEW_PROMPT_HIDDEN_KEY = "gptbd-review-prompt-hidden";
   const REVIEW_SESSION_MARK_KEY = "gptbd-review-session-marked";
@@ -1152,7 +1154,7 @@
       remove.disabled = busy || !library.isComplete || coolingDown || library.selectedIds.size === 0 || !hasCore || library.deleteApiAvailable === false;
       remove.title = coolingDown
         ? formatDeleteCooldownMessage()
-        : "Remove selected Library files after confirmation";
+        : STATE.skipLibraryDeleteWarning ? "Remove selected Library files" : "Remove selected Library files after confirmation";
     }
     if (removeLabel) {
       removeLabel.textContent = STATE.deleting
@@ -2349,7 +2351,7 @@
   /* Show the in-DOM confirmation modal; returns Promise<boolean> */
   function showDeleteModal(ids, titles, selectionContext = { mode: "default" }) {
     const isLibraryDelete = selectionContext.mode === "library";
-    if (STATE.skipDeleteWarning && !isLibraryDelete) return Promise.resolve(true);
+    if (isLibraryDelete ? STATE.skipLibraryDeleteWarning : STATE.skipDeleteWarning) return Promise.resolve(true);
 
     return new Promise(resolve => {
       const modal = document.getElementById("gptbd-modal");
@@ -2366,7 +2368,7 @@
 
       resetModalToDeleteDefaults(modal);
       const skipWarningCheckWrap = skipWarningCheck?.closest(".gptbd-modal__check");
-      if (skipWarningCheckWrap) skipWarningCheckWrap.hidden = isLibraryDelete;
+      if (skipWarningCheckWrap) skipWarningCheckWrap.hidden = false;
 
       const isProjectDelete = selectionContext.mode === "project";
       const noun = isLibraryDelete ? "Library file" : isProjectDelete ? "project conversation" : "conversation";
@@ -2422,8 +2424,8 @@
       window.setTimeout(() => { if (warningCheck) warningCheck.focus(); }, 60);
 
       async function done(result) {
-        if (result && !isLibraryDelete && skipWarningCheck?.checked) {
-          await setSkipDeleteWarningPreference(true);
+        if (result && skipWarningCheck?.checked) {
+          await setSkipDeleteWarningPreference(true, isLibraryDelete);
         }
         if (warningCheck) warningCheck.removeEventListener("change", syncConfirmState);
         modal.dataset.visible = "false";
@@ -3752,12 +3754,14 @@
         UI_HIDDEN_KEY,
         TOOLBAR_MODE_KEY,
         SKIP_DELETE_WARNING_KEY,
+        SKIP_LIBRARY_DELETE_WARNING_KEY,
         REVIEW_SESSION_COUNT_KEY,
         REVIEW_PROMPT_HIDDEN_KEY
       ]);
       STATE.uiHidden = Boolean(stored?.[UI_HIDDEN_KEY]);
       STATE.mode = isLibraryRoute() || stored?.[TOOLBAR_MODE_KEY] === "library" ? "library" : "chats";
       STATE.skipDeleteWarning = Boolean(stored?.[SKIP_DELETE_WARNING_KEY]);
+      STATE.skipLibraryDeleteWarning = Boolean(stored?.[SKIP_LIBRARY_DELETE_WARNING_KEY]);
       STATE.reviewSessionCount = normalizeStoredCount(stored?.[REVIEW_SESSION_COUNT_KEY]);
       STATE.reviewPromptHidden = Boolean(stored?.[REVIEW_PROMPT_HIDDEN_KEY]);
       await countReviewSession();
@@ -3765,6 +3769,7 @@
       STATE.uiHidden = false;
       STATE.mode = isLibraryRoute() ? "library" : "chats";
       STATE.skipDeleteWarning = false;
+      STATE.skipLibraryDeleteWarning = false;
       STATE.reviewSessionCount = 0;
       STATE.reviewPromptHidden = false;
     }
@@ -3792,11 +3797,12 @@
       || /^\/(?:library|space\/files)(?:\/|$)/i.test(window.location.pathname || "");
   }
 
-  async function setSkipDeleteWarningPreference(skip) {
-    STATE.skipDeleteWarning = skip;
+  async function setSkipDeleteWarningPreference(skip, library = false) {
+    if (library) STATE.skipLibraryDeleteWarning = skip;
+    else STATE.skipDeleteWarning = skip;
     if (!chrome?.storage?.local) return;
     try {
-      await chrome.storage.local.set({ [SKIP_DELETE_WARNING_KEY]: skip });
+      await chrome.storage.local.set({ [library ? SKIP_LIBRARY_DELETE_WARNING_KEY : SKIP_DELETE_WARNING_KEY]: skip });
     } catch (_) {}
   }
 
@@ -3820,6 +3826,9 @@
       }
       if (changes?.[SKIP_DELETE_WARNING_KEY]) {
         STATE.skipDeleteWarning = Boolean(changes[SKIP_DELETE_WARNING_KEY].newValue);
+      }
+      if (changes?.[SKIP_LIBRARY_DELETE_WARNING_KEY]) {
+        STATE.skipLibraryDeleteWarning = Boolean(changes[SKIP_LIBRARY_DELETE_WARNING_KEY].newValue);
       }
       if (changes?.[REVIEW_SESSION_COUNT_KEY]) {
         STATE.reviewSessionCount = normalizeStoredCount(changes[REVIEW_SESSION_COUNT_KEY].newValue);

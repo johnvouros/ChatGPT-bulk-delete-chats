@@ -32,11 +32,12 @@ The extension only talks to ChatGPT/OpenAI endpoints already used by the ChatGPT
 - sync your chat list
 - open chats you choose
 - delete chats you select
-- sync Library metadata, load visible thumbnail previews, and delete Library files you select and confirm
+- sync Library metadata, load visible thumbnail previews, and delete Library files you select
 
 ## Your control
 
 - Library sync starts automatically when you open Library mode or refresh with Library mode selected
 - You can clear the current Library session or manually resync
 - You choose what to delete
+- Chat and Library confirmation warnings are enabled by default; each has its own optional “Don't show this again” preference stored in your browser
 - You can resync at any time

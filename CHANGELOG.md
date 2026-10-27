@@ -10,6 +10,8 @@ This project follows a simple semantic versioning approach:
 
 ## [1.3.1] - 2026-10-27
 
+- Add a separate “Don’t show this again” preference for Library deletion confirmations
+
 - Make Show list a prominent blue button, with a darker Hide list state and visible keyboard focus
 - Allow up to two chat API deletions at a time to reduce time spent waiting for slow responses
 - Keep request starts at least 1.2 seconds apart and stop new attempts on rate-limit, authentication, or timeout pauses

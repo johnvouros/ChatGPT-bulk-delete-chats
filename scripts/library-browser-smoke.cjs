@@ -1,14 +1,16 @@
 // Optional browser smoke test: npm install --no-save playwright && npx playwright install chromium
 // Run: node scripts/library-browser-smoke.cjs
+// Firefox: PLAYWRIGHT_BROWSER=firefox node scripts/library-browser-smoke.cjs
 // Every request is intercepted; this never accesses a real ChatGPT account.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { chromium, firefox } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = path.resolve(__dirname, '..');
 
 (async () => {
-  const browser = await chromium.launch({ headless: true });
+  const engine = process.env.PLAYWRIGHT_BROWSER === 'firefox' ? firefox : chromium;
+  const browser = await engine.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const errors = [];
@@ -49,12 +51,13 @@ const root = path.resolve(__dirname, '..');
         return route.fulfill({ json: { success: true } });
       }
       if (url.pathname === '/backend-api/estuary/content' && url.searchParams.get('id') === 'file-extra-0') return route.fulfill({ status: 302, headers: { location: 'https://untrusted.example/redirect.png' } });
-      if (url.pathname === '/backend-api/estuary/content' || url.pathname === '/library/files/lib-b/thumbnail') return route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV1sAAAAASUVORK5CYII=', 'base64') });
+      if (url.pathname === '/backend-api/estuary/content' || url.pathname === '/library/files/lib-b/thumbnail') return route.fulfill({ contentType: 'image/png', body: fs.readFileSync(path.join(root, 'icons/icon-16.png')) });
       return route.fulfill({ status: 404, body: '' });
     });
     await page.goto('https://chatgpt.com/');
     await page.evaluate(() => {
       const values = { 'gptbd-skip-delete-warning': true };
+      window.testStorageValues = values;
       window.testPreviewFetches = [];
       window.testCreatedBlobs = [];
       window.testRevokedBlobs = [];
@@ -129,12 +132,101 @@ const root = path.resolve(__dirname, '..');
     await page.waitForFunction(() => document.querySelector('[data-role="library-status"]').textContent.match(/rate|wait|limit/i));
     assert.match(await page.locator('[data-role="library-selection-count"]').innerText(), /55 selected/);
     assert.equal(await page.locator('[data-action="library-delete"]').isDisabled(), true);
+
+    // Start a fresh extension page to test the opt-out preference independently
+    // from Chat confirmation. The pre-existing chat preference must not suppress
+    // Library's first confirmation.
+    mode = 'success';
+    await page.reload();
+    await page.evaluate(() => {
+      const values = { 'gptbd-skip-delete-warning': true };
+      window.testStorageValues = values;
+      window.testCreatedBlobs = [];
+      window.testRevokedBlobs = [];
+      const create = URL.createObjectURL.bind(URL);
+      const revoke = URL.revokeObjectURL.bind(URL);
+      URL.createObjectURL = blob => { const url = create(blob); window.testCreatedBlobs.push(url); return url; };
+      URL.revokeObjectURL = url => { window.testRevokedBlobs.push(url); revoke(url); };
+      window.chrome = {
+        runtime: {
+          getManifest: () => ({ version: '1.3.1' }), getURL: file => `https://chatgpt.com/${file}`,
+          onMessage: { addListener: listener => { window.testMessageListener = listener; } }
+        },
+        storage: {
+          local: {
+            get: async () => ({ ...values }), set: async update => Object.assign(values, update),
+            remove: async key => { delete values[key]; }
+          },
+          onChanged: { addListener: () => {} }
+        }
+      };
+      localStorage.setItem('gptbd-conversation-cache-v1', JSON.stringify({ conversations: [{ id: 'chat-a', title: 'Example chat' }], loadedAt: 123 }));
+    });
+    await page.addStyleTag({ path: path.join(root, 'styles.css') });
+    for (const script of manifest.content_scripts[0].js) await page.addScriptTag({ path: path.join(root, script) });
+    await page.locator('[data-action="set-mode"][data-mode="library"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-role="library-count"]').textContent.includes('55'));
+    await page.locator('[data-role="library-search"]').fill('Budget');
+    await page.locator('[data-action="library-select-all"]').click();
+    await page.locator('[data-action="library-delete"]').click();
+    await page.waitForFunction(() => document.querySelector('#gptbd-modal').dataset.visible === 'true');
+    assert.equal(await page.evaluate(() => window.testStorageValues['gptbd-skip-library-delete-warning']), undefined, 'Library must not inherit the chat warning preference');
+    await modal.locator('[data-role="modal-skip-warning-check"]').check();
+    await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#gptbd-modal').dataset.visible === 'false');
+    assert.equal(await page.evaluate(() => window.testStorageValues['gptbd-skip-library-delete-warning']), undefined, 'cancelling must not save the Library preference');
+
+    await page.locator('[data-action="library-delete"]').click();
+    await page.waitForFunction(() => document.querySelector('#gptbd-modal').dataset.visible === 'true');
+    await modal.locator('[data-role="modal-warning-check"]').check();
+    await modal.locator('[data-role="modal-skip-warning-check"]').check();
+    await modal.locator('[data-action="modal-confirm"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-role="library-selection-count"]').textContent.includes('0 selected'));
+    assert.equal(await page.evaluate(() => window.testStorageValues['gptbd-skip-library-delete-warning']), true, 'confirmed opt-out must save the Library preference');
+    assert.equal(await page.evaluate(() => window.testStorageValues['gptbd-skip-delete-warning']), true, 'Library preference must not alter the chat preference');
+
+    await page.locator('[data-role="library-search"]').fill('Photo extra-0');
+    await page.locator('[data-action="library-select-all"]').click();
+    await page.locator('[data-action="library-delete"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-role="library-selection-count"]').textContent.includes('0 selected'));
+    assert.equal(await page.locator('#gptbd-modal').getAttribute('data-visible'), 'false', 'saved Library preference must skip the next Library modal');
+
+    // Confirm a stored opt-out is restored when the extension loads on a later page.
+    await page.reload();
+    await page.evaluate(() => {
+      const values = {
+        'gptbd-skip-delete-warning': true,
+        'gptbd-skip-library-delete-warning': true
+      };
+      window.testStorageValues = values;
+      window.testCreatedBlobs = [];
+      window.testRevokedBlobs = [];
+      const create = URL.createObjectURL.bind(URL);
+      const revoke = URL.revokeObjectURL.bind(URL);
+      URL.createObjectURL = blob => { const url = create(blob); window.testCreatedBlobs.push(url); return url; };
+      URL.revokeObjectURL = url => { window.testRevokedBlobs.push(url); revoke(url); };
+      window.chrome = {
+        runtime: { getManifest: () => ({ version: '1.3.1' }), getURL: file => `https://chatgpt.com/${file}`, onMessage: { addListener() {} } },
+        storage: { local: { get: async () => ({ ...values }), set: async update => Object.assign(values, update), remove: async key => { delete values[key]; } }, onChanged: { addListener() {} } }
+      };
+    });
+    await page.addStyleTag({ path: path.join(root, 'styles.css') });
+    for (const script of manifest.content_scripts[0].js) await page.addScriptTag({ path: path.join(root, script) });
+    await page.locator('[data-action="set-mode"][data-mode="library"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-role="library-count"]').textContent.includes('53'));
+    await page.locator('[data-role="library-search"]').fill('Photo extra-53');
+    await page.locator('[data-action="library-select-all"]').click();
+    await page.locator('[data-action="library-delete"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-role="library-selection-count"]').textContent.includes('0 selected'));
+    assert.equal(await page.locator('#gptbd-modal').getAttribute('data-visible'), 'false', 'stored Library preference must survive reload');
+
+    await page.waitForFunction(() => !document.querySelector('[data-action="library-sync"]').disabled);
     delayLibrary = true;
     accountKey = 'account-b';
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await page.waitForFunction(() => document.querySelector('[data-role="library-count"]').textContent === '0 files');
     assert.equal(await page.locator('input[data-library-id]').count(), 0, 'account switch must hide prior account files');
-    await libraryStarted;
+    await Promise.race([libraryStarted, new Promise((_, reject) => setTimeout(() => reject(new Error("Account-switch sync did not start")), 5000))]);
     accountKey = 'account-c';
     releaseLibrary();
     await page.waitForFunction(() => !document.querySelector('[data-action="library-sync"]').disabled);
@@ -143,7 +235,7 @@ const root = path.resolve(__dirname, '..');
     assert.equal(await page.evaluate(() => window.testCreatedBlobs.every(url => window.testRevokedBlobs.includes(url))), true, 'account switch must revoke every preview blob');
     assert.deepEqual(externalRequests, [], "preview allowlist and redirect blocking must prevent all external requests");
     assert.deepEqual(errors, []);
-    console.log('Browser smoke passed: five-column grid, no-store previews, blob cleanup, session-only metadata, sync, filter, selection, mandatory confirmation, delete, chat-cache isolation, rate-limit retention, account switching, and stale sync rejection.');
+    console.log('Browser smoke passed: five-column grid, no-store previews, blob cleanup, session-only metadata, chat and Library confirmation preferences, reload persistence, sync, filter, selection, delete, rate-limit retention, account switching, and stale sync rejection.');
   } finally {
     await browser.close();
   }
