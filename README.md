@@ -1,6 +1,6 @@
 # ChatGPT Bulk Delete
 
-![Version](https://img.shields.io/badge/version-1.3.0-3b82f6)
+![Version](https://img.shields.io/badge/version-1.3.1-3b82f6)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-10b981)
 ![ChatGPT](https://img.shields.io/badge/Works%20on-chatgpt.com-111827)
 ![Firefox](https://img.shields.io/badge/Firefox-Compatible-f97316)
@@ -32,6 +32,7 @@ Firefox: [Install from Firefox Add-ons](https://addons.mozilla.org/en-GB/firefox
 - Filters chats by year, last activity older/newer than a chosen number of days, and project membership
 - Opens any result in a new tab before you delete it
 - Bulk deletes selected chats with a confirmation warning
+- Sends up to two chat deletions at a time, with spaced request starts and automatic pauses on rate-limit errors
 - Provides a separate Library mode to sync, search, select, and bulk-delete files
 
 Download the versioned Chrome and Firefox submission ZIPs from [GitHub Releases](https://github.com/johnvouros/ChatGPT-bulk-delete-chats/releases). Store listings may remain on the previous version until review is complete.
@@ -103,6 +104,8 @@ A failed initial sync clears partial results; a failed resync restores the previ
 Development checks: run `npm test`. The optional browser smoke test runs with `node scripts/library-browser-smoke.cjs` when Playwright and Chromium are available (`PLAYWRIGHT_MODULE` can point to an existing installation). Run `node scripts/library-auto-sync-smoke.cjs` for automatic/progressive sync coverage and `node scripts/project-filters-browser-smoke.cjs` for project discovery, age filters, and selection coverage. All browser requests are intercepted and use mock data.
 
 Run the project/filter smoke test in Firefox with `PLAYWRIGHT_BROWSER=firefox node scripts/project-filters-browser-smoke.cjs` after installing Playwright's Firefox browser. No real chats or files are deleted by these tests.
+
+Run `node scripts/chat-delete-browser-smoke.cjs` for concurrent chat deletion and rate-limit handling, or prefix it with `PLAYWRIGHT_BROWSER=firefox` to test Firefox. These requests also use mock data.
 
 ## Privacy
 

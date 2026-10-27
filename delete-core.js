@@ -66,53 +66,68 @@
       onProgress = () => {},
       delayImpl = ms => new Promise(resolve => setTimeout(resolve, ms)),
       nowImpl = () => performance.now(),
-      minIntervalMs = 1200
+      minIntervalMs = 1200,
+      concurrency = 1
     } = options || {};
     if (typeof deleteOne !== "function") throw new TypeError("deleteOne is required");
 
-    const failedIds = [];
+    const confirmed = new Set();
+    const active = new Set();
+    const maxConcurrent = concurrency === 2 ? 2 : 1;
     let deleted = 0;
     let processed = 0;
     let pauseError = null;
     let lastStartedAt = null;
+    let callbackError = null;
+    let updates = Promise.resolve();
 
-    for (let index = 0; index < ids.length; index += 1) {
-      if (lastStartedAt !== null && minIntervalMs > 0) {
-        const remainingMs = minIntervalMs - (nowImpl() - lastStartedAt);
-        if (remainingMs > 0) await delayImpl(remainingMs);
-      }
-      // Count request and UI work toward the interval; never overlap attempts.
-      lastStartedAt = nowImpl();
-      const id = ids[index];
-      let success;
+    async function attempt(id) {
+      let success = false;
+      let paused = false;
       try {
         success = await deleteOne(id);
       } catch (error) {
         if (error instanceof DeleteBatchPauseError) {
-          pauseError = error;
-          failedIds.push(...ids.slice(index));
-          await onProgress({ processed, total: ids.length, deleted, rateLimited: true });
-          break;
+          // Stop dispatch immediately, before waiting for UI updates. Requests
+          // already sent must settle so confirmed deletions are not lost.
+          if (!pauseError || error instanceof DeleteRateLimitError) pauseError = error;
+          paused = true;
         }
-        processed += 1;
-        failedIds.push(id);
-        await onProgress({ processed, total: ids.length, deleted, rateLimited: false });
-        continue;
       }
-
-      processed += 1;
-      if (success) {
-        await onDeleted(id);
-        deleted += 1;
-      } else {
-        failedIds.push(id);
-      }
-      await onProgress({ processed, total: ids.length, deleted, rateLimited: false });
+      const update = updates.then(async () => {
+        if (!paused) processed += 1;
+        if (success) {
+          await onDeleted(id);
+          confirmed.add(id);
+          deleted += 1;
+        }
+        await onProgress({ processed, total: ids.length, deleted, rateLimited: Boolean(pauseError) });
+      });
+      updates = update.catch(error => { callbackError = error; });
+      await updates;
     }
+
+    for (let index = 0; index < ids.length; index += 1) {
+      while (active.size >= maxConcurrent) await Promise.race(active);
+      if (pauseError || callbackError) break;
+      if (lastStartedAt !== null && minIntervalMs > 0) {
+        const remainingMs = minIntervalMs - (nowImpl() - lastStartedAt);
+        if (remainingMs > 0) await delayImpl(remainingMs);
+      }
+      // A request may have paused the batch while this dispatcher was asleep.
+      if (pauseError || callbackError) break;
+      // Space starts globally, even when up to two requests are in flight.
+      lastStartedAt = nowImpl();
+      const id = ids[index];
+      const task = attempt(id).finally(() => active.delete(task));
+      active.add(task);
+    }
+    await Promise.all(active);
+    if (callbackError) throw callbackError;
 
     return {
       deleted,
-      failedIds,
+      failedIds: ids.filter(id => !confirmed.has(id)),
       processed,
       pauseError,
       rateLimitError: pauseError instanceof DeleteRateLimitError ? pauseError : null

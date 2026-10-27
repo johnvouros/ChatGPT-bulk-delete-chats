@@ -228,7 +228,7 @@
 
         <div class="gptbd-delete-notice" data-role="delete-pacing-notice" role="status" hidden>
           <strong class="gptbd-delete-notice__title">Why is deletion slow?</strong>
-          <span>ChatGPT limits how quickly files and chats can be deleted. We add short pauses to reduce interruptions. Large selections may take a few minutes.</span>
+          <span>Each deletion needs a reply from ChatGPT, which can take several seconds. We space requests to reduce rate-limit errors and pause if ChatGPT asks us to slow down.</span>
         </div>
 
         <!-- ── Main horizontal bar ── -->
@@ -2279,10 +2279,29 @@
 
     let result = null;
     let sidebarRefreshed = false;
+    // API requests can overlap, but ChatGPT's menus/dialogs are shared UI.
+    // Keep fallback interactions serial and stop queued fallbacks on a pause.
+    let uiDeleteQueue = Promise.resolve();
+    let batchPauseError = null;
+    const deleteOne = async id => {
+      try {
+        if (await deleteConversationByApi(id, batchSession)) return true;
+        const fallback = uiDeleteQueue.then(() => {
+          if (batchPauseError) throw batchPauseError;
+          return deleteConversationByUi(id);
+        });
+        uiDeleteQueue = fallback.catch(() => {});
+        return await fallback;
+      } catch (error) {
+        if (error instanceof GPTBDDelete.DeleteBatchPauseError) batchPauseError = error;
+        throw error;
+      }
+    };
     try {
       result = await GPTBDDelete.runDeleteBatch({
         ids,
-        deleteOne: id => deleteConversationById(id, batchSession),
+        deleteOne,
+        concurrency: batchSession?.accessToken ? 2 : 1,
         delayImpl: delay,
         minIntervalMs: 1200,
         onDeleted(id) {
@@ -2475,10 +2494,7 @@
   }
 
   /* ───────────────────────── INDIVIDUAL DELETION ─────────────────────────── */
-  async function deleteConversationById(id, session) {
-    const apiDeleted = await deleteConversationByApi(id, session);
-    if (apiDeleted) return true;
-
+  async function deleteConversationByUi(id) {
     const row = document.querySelector(`[data-gptbd-conversation-id="${CSS.escape(id)}"]`);
     if (!row) {
       registerCapabilityFailure("deleteUi", "Chat row was not available for UI fallback.");

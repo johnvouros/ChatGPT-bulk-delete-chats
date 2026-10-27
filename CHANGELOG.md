@@ -8,6 +8,14 @@ This project follows a simple semantic versioning approach:
 - `MINOR`: new features that stay backward-compatible
 - `PATCH`: fixes, polish, and safe maintenance updates
 
+## [1.3.1] - 2026-10-27
+
+- Allow up to two chat API deletions at a time to reduce time spent waiting for slow responses
+- Keep request starts at least 1.2 seconds apart and stop new attempts on rate-limit, authentication, or timeout pauses
+- Retain confirmed results from requests already in flight when a batch pauses
+- Keep menu-based deletion and Library deletion sequential
+- Explain server response delays more accurately in the deletion notice
+
 ## [1.3.0] - 2026-10-27
 
 - Fix project names being replaced by chat titles and reconcile project identifiers used by sidebar links and synced chats (issue #10)
